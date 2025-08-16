@@ -130,6 +130,9 @@
             <div id="timerBar">
                 <div id="timerFill" style="width: 100%"></div>
             </div>
+            <div class="ui-element" id="timerText" style="font-size: 18px; margin-top: 5px;">
+                ⏱️ Time: <span id="timeRemaining">15</span>s
+            </div>
         </div>
         
         <div id="rightUI">
@@ -138,6 +141,9 @@
             </div>
             <div class="ui-element">
                 💯 Score: <span id="score">0</span>
+            </div>
+            <div class="ui-element" id="powerUpDisplay" style="display: none;">
+                ⚡ Power: <span id="activePowerUp">None</span>
             </div>
             <div class="ui-element">
                 <button id="exitButton" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">Exit</button>
@@ -176,7 +182,7 @@
             MIN_WATER_FLOW: 0.02, // Minimum water to flow
             TAP_WIDTH: 4, // Width of tap in grid cells
             TAP_X: 80, // X position of tap in grid
-            TAP_Y: 5 // Y position of tap in grid
+            TAP_Y: 0 // Y position of tap in grid - at very top
         };
 
         // Terrain Types
@@ -208,6 +214,13 @@
                 this.ammoCount = 0;
                 this.fuelCollected = 0;
                 this.showInstructions = false;
+                this.showLeaderboard = false;
+                this.leaderboard = this.loadLeaderboard();
+                this.showCustomization = false;
+                
+                // Load saved customization
+                this.selectedSkin = localStorage.getItem('pipelinePanicSkin') || 'default';
+                this.selectedFuelColor = localStorage.getItem('pipelinePanicFuelColor') || 'blue';
                 
                 // Phase 1 variables
                 this.grid = [];
@@ -240,6 +253,35 @@
                     '#8d6e63'  // Desert ruins
                 ];
                 
+                // Sound system
+                this.audioContext = null;
+                this.sounds = {};
+                this.initSounds();
+                
+                // Power-ups
+                this.powerUps = [];
+                this.collectedPowerUps = [];
+                this.activePowerUp = null;
+                this.showingPowerUpSelection = false;
+                
+                // Customization
+                this.selectedSkin = 'default';
+                this.selectedFuelColor = 'blue';
+                this.skins = {
+                    default: { name: 'Classic', color: '#4169E1', gradient: ['#5C7CFA', '#4169E1', '#364FC7'] },
+                    red: { name: 'Crimson', color: '#DC143C', gradient: ['#FF6B6B', '#DC143C', '#B91C1C'] },
+                    green: { name: 'Forest', color: '#228B22', gradient: ['#4ADE80', '#228B22', '#166534'] },
+                    purple: { name: 'Royal', color: '#9370DB', gradient: ['#C084FC', '#9370DB', '#7C3AED'] },
+                    gold: { name: 'Golden', color: '#FFD700', gradient: ['#FDE047', '#FFD700', '#EAB308'] }
+                };
+                this.fuelColors = {
+                    blue: { name: 'Ocean', color: '#00BFFF' },
+                    green: { name: 'Toxic', color: '#00FF00' },
+                    purple: { name: 'Plasma', color: '#FF00FF' },
+                    gold: { name: 'Honey', color: '#FFD700' },
+                    red: { name: 'Lava', color: '#FF6347' }
+                };
+                
                 // Input handling
                 this.keys = {};
                 this.mouse = { x: 0, y: 0, down: false };
@@ -247,6 +289,102 @@
                 this.updateUI(); // Hide UI initially since we're in menu
                 this.setupEventListeners();
                 this.gameLoop();
+            }
+            
+            hexToRgb(hex) {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : { r: 0, g: 191, b: 255 }; // Default to blue if parsing fails
+            }
+            
+            initSounds() {
+                // Initialize Web Audio API for sound effects
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    console.log('Web Audio API not supported');
+                    return;
+                }
+            }
+            
+            playSound(type, frequency = null, duration = 0.1) {
+                if (!this.audioContext) return;
+                
+                const oscillator = this.audioContext.createOscillator();
+                const gainNode = this.audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+                
+                switch(type) {
+                    case 'shoot':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(600, this.audioContext.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(300, this.audioContext.currentTime + 0.05);
+                        gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.05);
+                        duration = 0.05;
+                        break;
+                    case 'hit':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.setValueAtTime(220, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.2, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+                        duration = 0.1;
+                        break;
+                    case 'burst':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(110, this.audioContext.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(55, this.audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.4, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.2);
+                        duration = 0.2;
+                        
+                        // Add noise burst
+                        const bufferSize = this.audioContext.sampleRate * 0.1;
+                        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+                        const output = buffer.getChannelData(0);
+                        for (let i = 0; i < bufferSize; i++) {
+                            output[i] = Math.random() * 2 - 1;
+                        }
+                        const noise = this.audioContext.createBufferSource();
+                        noise.buffer = buffer;
+                        const noiseGain = this.audioContext.createGain();
+                        noise.connect(noiseGain);
+                        noiseGain.connect(this.audioContext.destination);
+                        noiseGain.gain.setValueAtTime(0.2, this.audioContext.currentTime);
+                        noiseGain.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+                        noise.start();
+                        noise.stop(this.audioContext.currentTime + 0.1);
+                        break;
+                    case 'waterFill':
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(660 + Math.random() * 100, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.05, this.audioContext.currentTime);
+                        duration = 0.05;
+                        break;
+                    case 'dig':
+                        oscillator.type = 'square';
+                        oscillator.frequency.setValueAtTime(150 + Math.random() * 50, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.05);
+                        duration = 0.05;
+                        break;
+                    case 'powerup':
+                        oscillator.type = 'sine';
+                        oscillator.frequency.setValueAtTime(523, this.audioContext.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(1047, this.audioContext.currentTime + 0.2);
+                        gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
+                        duration = 0.3;
+                        break;
+                }
+                
+                oscillator.start();
+                oscillator.stop(this.audioContext.currentTime + duration);
             }
 
             startGame() {
@@ -287,7 +425,7 @@
                     this.tankX = Math.floor(Math.random() * 2) * 120; // Far left or far right
                     this.tankY = 60;
                     this.tapX = 60 + Math.floor(Math.random() * 40);
-                    this.tapY = 5;
+                    this.tapY = 0; // Always at very top
                 } else {
                     // All other waves - full randomization
                     // Tank can be left, middle, or right
@@ -295,9 +433,9 @@
                     this.tankX = tankPositions[Math.floor(Math.random() * tankPositions.length)];
                     this.tankY = 55 + Math.floor(Math.random() * 10);
                     
-                    // Tap position varies widely
+                    // Tap position varies widely horizontally, but always at top
                     this.tapX = 20 + Math.floor(Math.random() * 120);
-                    this.tapY = 5 + Math.floor(Math.random() * 7);
+                    this.tapY = 0; // Always at very top
                     
                     // Ensure tap isn't directly above tank for challenge
                     if (Math.abs(this.tapX - this.tankX - 16) < 20) {
@@ -321,6 +459,24 @@
                 this.phaseStarted = false;
                 this.countdownTimer = 3000;
                 this.waterFlowing = false;
+                
+                // Add power-ups based on wave
+                this.powerUps = [];
+                const powerUpCount = Math.min(Math.floor(this.wave / 2) + 1, 4); // 1-4 power-ups
+                for (let i = 0; i < powerUpCount; i++) {
+                    let x, y;
+                    // Find valid position for power-up
+                    do {
+                        x = 20 + Math.floor(Math.random() * 120);
+                        y = 25 + Math.floor(Math.random() * 35);
+                    } while (this.grid[y][x] !== TERRAIN.SAND);
+                    
+                    // Different power-up types
+                    const types = ['rapidFire', 'doubleDamage', 'spreadShot'];
+                    const type = types[Math.floor(Math.random() * types.length)];
+                    
+                    this.powerUps.push({ x, y, collected: false, type });
+                }
                 
                 // Debug: Log positions
                 console.log(`Wave ${this.wave}: Tank at (${this.tankX}, ${this.tankY}), Tap at (${this.tapX}, ${this.tapY})`);
@@ -525,7 +681,13 @@
                     if (this.currentState === GAME_STATE.MENU) {
                         this.handleMenuClick();
                     } else if (this.currentState === GAME_STATE.PHASE2) {
-                        this.fireBullet();
+                        if (this.showingPowerUpSelection) {
+                            this.handlePowerUpClick();
+                        } else {
+                            this.fireBullet();
+                        }
+                    } else if (this.currentState === GAME_STATE.GAME_OVER) {
+                        this.handleGameOverClick();
                     }
                 });
 
@@ -546,6 +708,17 @@
                 // Keyboard events
                 document.addEventListener('keydown', (e) => {
                     this.keys[e.code] = true;
+                    
+                    // Handle name input in game over screen
+                    if (this.currentState === GAME_STATE.GAME_OVER && !this.gameOverNameSubmitted) {
+                        if (e.key === 'Enter') {
+                            this.submitGameOverName();
+                        } else if (e.key === 'Backspace') {
+                            this.gameOverName = this.gameOverName.slice(0, -1);
+                        } else if (e.key.length === 1 && this.gameOverName.length < 20) {
+                            this.gameOverName += e.key;
+                        }
+                    }
                 });
 
                 document.addEventListener('keyup', (e) => {
@@ -554,8 +727,8 @@
                 
                 // Exit button
                 document.getElementById('exitButton').addEventListener('click', () => {
-                    if (confirm('Are you sure you want to exit the game?')) {
-                        this.gameOver();
+                    if (confirm('Are you sure you want to exit to main menu?')) {
+                        this.exitToMenu();
                     }
                 });
             }
@@ -564,7 +737,7 @@
                 const centerX = 400;
                 const centerY = 200;
                 
-                if (!this.showInstructions) {
+                if (!this.showInstructions && !this.showCustomization && !this.showLeaderboard) {
                     // Check play button
                     if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
                         this.mouse.y > centerY - 30 && this.mouse.y < centerY + 10) {
@@ -575,11 +748,52 @@
                              this.mouse.y > centerY + 40 && this.mouse.y < centerY + 80) {
                         this.showInstructions = true;
                     }
-                } else {
+                    // Check customization button
+                    else if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
+                             this.mouse.y > centerY + 100 && this.mouse.y < centerY + 140) {
+                        this.showCustomization = true;
+                    }
+                } else if (this.showInstructions) {
                     // Back button from instructions
                     if (this.mouse.x > centerX - 50 && this.mouse.x < centerX + 50 &&
                         this.mouse.y > 340 && this.mouse.y < 380) {
                         this.showInstructions = false;
+                    }
+                } else if (this.showCustomization) {
+                    // Check skin selection
+                    let skinX = 80;
+                    for (const [key, skin] of Object.entries(this.skins)) {
+                        if (this.mouse.x > skinX && this.mouse.x < skinX + 120 &&
+                            this.mouse.y > 140 && this.mouse.y < 180) {
+                            this.selectedSkin = key;
+                            localStorage.setItem('pipelinePanicSkin', key);
+                            this.playSound('powerup');
+                        }
+                        skinX += 130;
+                    }
+                    
+                    // Check fuel color selection
+                    let fuelX = 80;
+                    for (const [key, fuel] of Object.entries(this.fuelColors)) {
+                        if (this.mouse.x > fuelX && this.mouse.x < fuelX + 120 &&
+                            this.mouse.y > 220 && this.mouse.y < 260) {
+                            this.selectedFuelColor = key;
+                            localStorage.setItem('pipelinePanicFuelColor', key);
+                            this.playSound('powerup');
+                        }
+                        fuelX += 130;
+                    }
+                    
+                    // Back button from customization
+                    if (this.mouse.x > centerX - 50 && this.mouse.x < centerX + 50 &&
+                        this.mouse.y > 290 && this.mouse.y < 330) {
+                        this.showCustomization = false;
+                    }
+                } else if (this.showLeaderboard) {
+                    // Back button from leaderboard
+                    if (this.mouse.x > centerX - 50 && this.mouse.x < centerX + 50 &&
+                        this.mouse.y > 340 && this.mouse.y < 380) {
+                        this.showLeaderboard = false;
                     }
                 }
             }
@@ -607,6 +821,11 @@
                                 this.grid[gridY][gridX] === TERRAIN.SAND) {
                                 
                                 this.grid[gridY][gridX] = TERRAIN.SKY;
+                                
+                                                        // Play dig sound (more frequent)
+                        if (Math.random() < 0.5) {
+                            this.playSound('dig');
+                        }
                                 
                                 // Create realistic dust particles - more variation
                                 const particleCount = 2 + Math.floor(Math.random() * 3);
@@ -713,7 +932,24 @@
                             if (terrain === TERRAIN.TANK) {
                                 this.fuelLevel = Math.min(100, this.fuelLevel + water * 2); // Slower tank filling
                                 newWaterGrid[y][x] = 0;
+                                
+                                // Play water fill sound (more frequent)
+                                if (Math.random() < 0.2 && water > 0.1) {
+                                    this.playSound('waterFill');
+                                }
                                 continue;
+                            }
+                            
+                            // Check if water hits power-up
+                            for (const powerUp of this.powerUps) {
+                                if (!powerUp.collected && 
+                                    Math.abs(powerUp.x - x) < 2 && 
+                                    Math.abs(powerUp.y - y) < 2) {
+                                    powerUp.collected = true;
+                                    this.collectedPowerUps.push(powerUp);
+                                    this.playSound('powerup');
+                                    console.log('Power-up collected:', powerUp.type);
+                                }
                             }
                             
                             // Skip if cell is solid
@@ -796,51 +1032,89 @@
                 // Reset timer for boulder phase
                 this.boulderPhaseTimer = CONFIG.BOULDER_PHASE_TIME;
                 
-                // Immediately create boulders and start phase 2
-                this.createBoulders();
-                this.updateUI();
+                // Show power-up selection if any were collected
+                if (this.collectedPowerUps.length > 0) {
+                    this.showPowerUpSelection();
+                } else {
+                    // Immediately create boulders and start phase 2
+                    this.createBoulders();
+                    this.updateUI();
+                }
                 
                 // Debug: Log transition
                 console.log('Transitioned to Phase 2, Wave:', this.wave);
+            }
+            
+            showPowerUpSelection() {
+                // Show on-screen power-up selection
+                this.showingPowerUpSelection = true;
+                this.powerUpTypes = [...new Set(this.collectedPowerUps.map(p => p.type))];
+            }
+            
+            selectPowerUp(typeIndex) {
+                if (typeIndex >= 0 && typeIndex < this.powerUpTypes.length) {
+                    this.activePowerUp = { type: this.powerUpTypes[typeIndex] };
+                    console.log('Selected power-up:', this.activePowerUp.type);
+                } else {
+                    this.activePowerUp = null;
+                }
+                
+                // Clear collected power-ups for next wave
+                this.collectedPowerUps = [];
+                this.showingPowerUpSelection = false;
+                
+                // Create boulders and start phase 2
+                this.createBoulders();
+                this.updateUI();
             }
 
             createBoulders() {
                 this.boulders = [];
                 
-                // Progressive difficulty with better pacing
+                // Progressive difficulty with CONSIDERABLY harder progression
                 let count, baseHP, sizeVariation;
                 
-                if (this.wave <= 3) {
-                    // Waves 1-3: Gentle introduction
-                    count = 1 + Math.floor(this.wave / 2); // 1-2 boulders
-                    baseHP = 2 + Math.floor(this.wave * 0.5);
+                if (this.wave === 1) {
+                    // Wave 1: Easy start
+                    count = 2;
+                    baseHP = 2;
                     sizeVariation = 0;
-                } else if (this.wave <= 6) {
-                    // Waves 4-6: Moderate challenge
-                    count = 2 + Math.floor((this.wave - 3) * 0.7); // 2-4 boulders
-                    baseHP = 3 + this.wave - 3;
-                    sizeVariation = 5; // Some size variety
-                } else if (this.wave <= 10) {
-                    // Waves 7-10: Getting challenging
-                    count = 4 + Math.floor((this.wave - 6) * 0.5); // 4-6 boulders
-                    baseHP = 5 + this.wave - 6;
+                } else if (this.wave === 2) {
+                    // Wave 2: CONSIDERABLE jump in difficulty
+                    count = 5;
+                    baseHP = 4;
                     sizeVariation = 10;
-                } else {
-                    // Waves 11+: Max challenge with creative variations
-                    count = Math.min(6 + Math.floor((this.wave - 10) * 0.3), 8); // Max 8 boulders
-                    baseHP = 8 + Math.floor((this.wave - 10) * 0.5);
+                } else if (this.wave === 3) {
+                    // Wave 3: Major challenge
+                    count = 8;
+                    baseHP = 6;
                     sizeVariation = 15;
+                } else if (this.wave <= 5) {
+                    // Waves 4-5: Very tough
+                    count = 10 + (this.wave - 3) * 2;
+                    baseHP = 8 + (this.wave - 3);
+                    sizeVariation = 20;
+                } else if (this.wave <= 8) {
+                    // Waves 6-8: Extremely challenging
+                    count = 15 + (this.wave - 5) * 2;
+                    baseHP = 11 + (this.wave - 5);
+                    sizeVariation = 25;
+                } else {
+                    // Waves 9+: Nightmare difficulty with exponential scaling
+                    count = Math.min(20 + Math.floor((this.wave - 8) * 2), 30); // Max 30 boulders
+                    baseHP = 15 + Math.floor((this.wave - 8) * 1.2);
+                    sizeVariation = 30;
                 }
                 
                 // Create boulders with variety
                 for (let i = 0; i < count; i++) {
                     const sizeOffset = (Math.random() - 0.5) * sizeVariation;
                     const radius = 25 + sizeOffset;
-                    const speed = this.wave > 5 ? 1 + (this.wave - 5) * 0.08 : 1; // Gradually faster
+                    const speed = this.wave > 1 ? 1 + (this.wave - 1) * 0.25 : 1; // Much faster progression from wave 2
                     
-                    // Special boulder types for later waves
+                    // Special boulder types appear earlier and more frequently
                     let boulderType = 'normal';
-                    if (this.wave > 8 && Math.random() < 0.3) {
+                    if (this.wave > 2 && Math.random() < Math.min(0.3 + this.wave * 0.08, 0.8)) {
                         boulderType = Math.random() < 0.5 ? 'armored' : 'fast';
                     }
                     
@@ -884,7 +1158,8 @@
 
                 // Auto-fire system (unlimited ammo in boulder phase)
                 const now = Date.now();
-                if (now - this.lastAutoFire >= CONFIG.AUTO_FIRE_RATE) {
+                const fireRate = this.activePowerUp?.type === 'rapidFire' ? CONFIG.AUTO_FIRE_RATE / 2 : CONFIG.AUTO_FIRE_RATE;
+                if (now - this.lastAutoFire >= fireRate) {
                     this.fireBullet();
                     this.lastAutoFire = now;
                 }
@@ -911,7 +1186,8 @@
                 // Update bullets
                 for (let i = this.bullets.length - 1; i >= 0; i--) {
                     const bullet = this.bullets[i];
-                    bullet.y -= CONFIG.BULLET_SPEED;
+                    bullet.x += bullet.vx || 0;
+                    bullet.y += bullet.vy || -CONFIG.BULLET_SPEED;
                     
                     if (bullet.y < 0) {
                         this.bullets.splice(i, 1);
@@ -929,8 +1205,8 @@
                         const distance = Math.sqrt(dx * dx + dy * dy);
                         
                         if (distance < boulder.radius) {
+                            this.hitBoulder(j, bullet);
                             this.bullets.splice(i, 1);
-                            this.hitBoulder(j);
                             bulletHit = true;
                             break;
                         }
@@ -1049,7 +1325,7 @@
                 }
             }
 
-            hitBoulder(boulderIndex) {
+            hitBoulder(boulderIndex, bullet) {
                 // Safety check - ensure boulder exists
                 if (boulderIndex < 0 || boulderIndex >= this.boulders.length) {
                     return;
@@ -1058,10 +1334,14 @@
                 const boulder = this.boulders[boulderIndex];
                 if (!boulder) return; // Additional safety check
                 
-                boulder.hp--;
+                const damage = bullet?.damage || 1;
+                boulder.hp -= damage;
                 
                 // Impact effects
                 this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY * 0.5;
+                
+                // Play hit sound
+                this.playSound('hit');
                 
                 // Impact particles
                 for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
@@ -1078,18 +1358,26 @@
                 if (boulder.hp <= 0) {
                     this.score += (boulder.size || 1) * 100;
                     
+                    // Play boulder destruction sound
+                    this.playSound('burst');
+                    
                     // Destruction effects
                     this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
                     
-                    // More destruction particles
-                    for (let i = 0; i < CONFIG.PARTICLE_COUNT * 2; i++) {
+                    // Enhanced destruction particles with burst effect
+                    for (let i = 0; i < CONFIG.PARTICLE_COUNT * 3; i++) {
+                        const angle = (Math.PI * 2 * i) / (CONFIG.PARTICLE_COUNT * 3);
+                        const speed = 5 + Math.random() * 10;
                         this.impactParticles.push({
-                            x: boulder.x + (Math.random() - 0.5) * boulder.radius * 2,
-                            y: boulder.y + (Math.random() - 0.5) * boulder.radius * 2,
-                            vx: (Math.random() - 0.5) * 12,
-                            vy: (Math.random() - 0.5) * 12,
-                            life: 30 + Math.random() * 20,
-                            maxLife: 50
+                            x: boulder.x,
+                            y: boulder.y,
+                            vx: Math.cos(angle) * speed,
+                            vy: Math.sin(angle) * speed,
+                            life: 30 + Math.random() * 30,
+                            maxLife: 60,
+                            color: boulder.type === 'armored' ? 'rgba(192, 192, 192,' : 
+                                   boulder.type === 'fast' ? 'rgba(255, 100, 100,' : 'rgba(139, 69, 19,',
+                            size: 2 + Math.random() * 4
                         });
                     }
                     
@@ -1123,10 +1411,23 @@
 
             fireBullet() {
                 // In phase 2, unlimited ammo
-                this.bullets.push({
-                    x: this.gun.x + this.gun.width / 2,
-                    y: this.gun.y
-                });
+                // Apply power-up effects
+                const damage = this.activePowerUp?.type === 'doubleDamage' ? 2 : 1;
+                const spread = this.activePowerUp?.type === 'spreadShot' ? 3 : 1;
+                
+                for (let i = 0; i < spread; i++) {
+                    const angle = spread > 1 ? (i - 1) * 0.15 : 0; // Spread angle
+                    this.bullets.push({
+                        x: this.gun.x + this.gun.width / 2,
+                        y: this.gun.y,
+                        vx: Math.sin(angle) * 3,
+                        vy: -CONFIG.BULLET_SPEED,
+                        damage: damage
+                    });
+                }
+                
+                // Play shooting sound
+                this.playSound('shoot');
                 
                 // Muzzle flash and recoil effects
                 this.muzzleFlash = 10;
@@ -1148,6 +1449,8 @@
                 this.boulders = [];
                 this.impactParticles = [];
                 this.pendingSplits = []; // Clear any pending boulder splits
+                this.activePowerUp = null; // Clear active power-up
+                this.collectedPowerUps = []; // Clear collected power-ups
                 
                 // Cycle background
                 this.backgroundIndex = (this.backgroundIndex + 1) % this.backgrounds.length;
@@ -1161,18 +1464,13 @@
                 console.log('Started Wave:', this.wave, 'Phase 1');
             }
 
-            gameOver() {
-                alert(`Game Over! Wave: ${this.wave}, Score: ${this.score}`);
-                
-                // Save high score
-                const highScore = parseInt(localStorage.getItem('highScore') || '0');
-                if (this.score > highScore) {
-                    localStorage.setItem('highScore', this.score.toString());
-                }
-                
-                // Return to menu
+            exitToMenu() {
+                // Exit to menu without game over flow
                 this.currentState = GAME_STATE.MENU;
                 this.showInstructions = false;
+                this.showCustomization = false;
+                this.showLeaderboard = false;
+                
                 // Clear all game data
                 this.bullets = [];
                 this.boulders = [];
@@ -1181,6 +1479,78 @@
                 this.impactParticles = [];
                 this.pendingSplits = [];
                 this.transitioning = false;
+                this.showingPowerUpSelection = false;
+                this.activePowerUp = null;
+                this.collectedPowerUps = [];
+                this.powerUps = [];
+            }
+            
+            gameOver() {
+                // Set game over state
+                this.currentState = GAME_STATE.GAME_OVER;
+                this.gameOverName = '';
+                this.gameOverNameSubmitted = false;
+                
+                // Save high score
+                const highScore = parseInt(localStorage.getItem('highScore') || '0');
+                if (this.score > highScore) {
+                    localStorage.setItem('highScore', this.score.toString());
+                }
+            }
+            
+            submitGameOverName() {
+                const playerName = this.gameOverName.trim() || 'Anonymous';
+                this.addToLeaderboard(playerName, this.score, this.wave);
+                this.gameOverNameSubmitted = true;
+                
+                // Show leaderboard for 2 seconds then return to menu
+                setTimeout(() => {
+                    this.returnToMenuFromGameOver();
+                }, 2000);
+            }
+            
+            returnToMenuFromGameOver() {
+                // Return to menu
+                this.currentState = GAME_STATE.MENU;
+                this.showInstructions = false;
+                this.showCustomization = false;
+                this.showLeaderboard = true; // Show leaderboard after game over
+                // Clear all game data
+                this.bullets = [];
+                this.boulders = [];
+                this.waterGrid = [];
+                this.dustParticles = [];
+                this.impactParticles = [];
+                this.pendingSplits = [];
+                this.transitioning = false;
+                this.showingPowerUpSelection = false;
+                this.activePowerUp = null;
+                this.collectedPowerUps = [];
+                this.powerUps = [];
+            }
+            
+            loadLeaderboard() {
+                const saved = localStorage.getItem('pipelinePanicLeaderboard');
+                return saved ? JSON.parse(saved) : [];
+            }
+            
+            saveLeaderboard() {
+                localStorage.setItem('pipelinePanicLeaderboard', JSON.stringify(this.leaderboard));
+            }
+            
+            addToLeaderboard(name, score, wave) {
+                this.leaderboard.push({
+                    name: name.substring(0, 20), // Limit name length
+                    score: score,
+                    wave: wave,
+                    date: new Date().toLocaleDateString()
+                });
+                
+                // Sort by score (descending) and keep only top 10
+                this.leaderboard.sort((a, b) => b.score - a.score);
+                this.leaderboard = this.leaderboard.slice(0, 10);
+                
+                this.saveLeaderboard();
             }
 
             updateUI() {
@@ -1197,6 +1567,29 @@
                     
                     document.getElementById('waveCount').textContent = this.wave;
                     document.getElementById('score').textContent = this.score;
+                    
+                    // Update timer text
+                    const timeRemaining = document.getElementById('timeRemaining');
+                    if (this.currentState === GAME_STATE.PHASE1) {
+                        timeRemaining.textContent = Math.ceil(this.phaseTimer / 1000);
+                    } else if (this.currentState === GAME_STATE.PHASE2) {
+                        timeRemaining.textContent = Math.ceil(this.boulderPhaseTimer / 1000);
+                    }
+                    
+                    // Update power-up display
+                    const powerUpDisplay = document.getElementById('powerUpDisplay');
+                    const activePowerUpText = document.getElementById('activePowerUp');
+                    if (this.currentState === GAME_STATE.PHASE2 && this.activePowerUp) {
+                        powerUpDisplay.style.display = 'block';
+                        const powerUpNames = {
+                            'rapidFire': '⚡ Rapid Fire',
+                            'doubleDamage': '💥 Double Damage',
+                            'spreadShot': '🎯 Spread Shot'
+                        };
+                        activePowerUpText.textContent = powerUpNames[this.activePowerUp.type] || 'Unknown';
+                    } else {
+                        powerUpDisplay.style.display = 'none';
+                    }
                     
                     // Update tank fill visualization
                     const tankFill = document.getElementById('tankFill');
@@ -1226,9 +1619,52 @@
                 this.ctx.save();
                 this.ctx.translate(this.cameraShake.x, this.cameraShake.y);
                 
-                // Clear canvas with dynamic background
-                this.ctx.fillStyle = this.currentState === GAME_STATE.MENU ? '#87CEEB' : this.backgrounds[this.backgroundIndex];
-                this.ctx.fillRect(-10, -10, 820, 420);
+                // Clear canvas with enhanced dynamic background
+                if (this.currentState === GAME_STATE.MENU) {
+                    // Menu background gradient
+                    const menuGradient = this.ctx.createLinearGradient(0, 0, 0, 400);
+                    menuGradient.addColorStop(0, '#87CEEB');
+                    menuGradient.addColorStop(0.5, '#6BA6CD');
+                    menuGradient.addColorStop(1, '#4682B4');
+                    this.ctx.fillStyle = menuGradient;
+                    this.ctx.fillRect(-10, -10, 820, 420);
+                } else if (this.currentState === GAME_STATE.PHASE1) {
+                    // Phase 1 sky gradient
+                    const skyGradient = this.ctx.createLinearGradient(0, 0, 0, 400);
+                    skyGradient.addColorStop(0, '#87CEEB');
+                    skyGradient.addColorStop(0.3, '#98D8E8');
+                    skyGradient.addColorStop(1, '#F0E68C');
+                    this.ctx.fillStyle = skyGradient;
+                    this.ctx.fillRect(-10, -10, 820, 420);
+                } else if (this.currentState === GAME_STATE.PHASE2) {
+                    // Phase 2 dynamic background based on wave
+                    const bgGradient = this.ctx.createLinearGradient(0, 0, 0, 400);
+                    const colors = [
+                        ['#1a237e', '#283593', '#3949ab'], // Night
+                        ['#388e3c', '#43a047', '#66bb6a'], // Forest
+                        ['#ff7043', '#ff8a65', '#ffab91'], // Sunset
+                        ['#8d6e63', '#a1887f', '#bcaaa4']  // Desert
+                    ];
+                    const colorSet = colors[this.backgroundIndex % colors.length];
+                    bgGradient.addColorStop(0, colorSet[0]);
+                    bgGradient.addColorStop(0.5, colorSet[1]);
+                    bgGradient.addColorStop(1, colorSet[2]);
+                    this.ctx.fillStyle = bgGradient;
+                    this.ctx.fillRect(-10, -10, 820, 420);
+                    
+                    // Add stars for night background
+                    if (this.backgroundIndex % 4 === 0) {
+                        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                        for (let i = 0; i < 50; i++) {
+                            const x = (i * 97) % 800;
+                            const y = (i * 53) % 200;
+                            const size = ((i * 7) % 3) + 1;
+                            this.ctx.beginPath();
+                            this.ctx.arc(x, y, size, 0, Math.PI * 2);
+                            this.ctx.fill();
+                        }
+                    }
+                }
 
                 if (this.currentState === GAME_STATE.MENU) {
                     this.renderMenu();
@@ -1236,16 +1672,26 @@
                     this.renderPhase1();
                 } else if (this.currentState === GAME_STATE.PHASE2) {
                     this.renderPhase2();
+                } else if (this.currentState === GAME_STATE.GAME_OVER) {
+                    this.renderGameOver();
                 }
                 
                 this.ctx.restore();
+                
+                // Render power-up selection UI if showing
+                if (this.showingPowerUpSelection) {
+                    this.renderPowerUpSelection();
+                }
             }
             
             renderMenu() {
+                // Render menu background
+                this.renderMenuBackground();
+                
                 const centerX = 400;
                 const centerY = 200;
                 
-                if (!this.showInstructions) {
+                if (!this.showInstructions && !this.showCustomization && !this.showLeaderboard) {
                     // Title
                     this.ctx.font = 'bold 72px Arial';
                     this.ctx.textAlign = 'center';
@@ -1285,10 +1731,26 @@
                     this.ctx.fillText('INSTRUCTIONS', centerX, centerY + 60);
                     
                     // High score display
+                    // Customization button
+                    this.ctx.fillStyle = '#9C27B0';
+                    this.ctx.fillRect(centerX - 100, centerY + 100, 200, 40);
+                    this.ctx.strokeStyle = '#6A1B9A';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(centerX - 100, centerY + 100, 200, 40);
+                    
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('CUSTOMIZE', centerX, centerY + 120);
+                    
+                    // High score display
                     this.ctx.font = '20px Arial';
                     this.ctx.fillStyle = '#333333';
-                    this.ctx.fillText('High Score: ' + (localStorage.getItem('highScore') || 0), centerX, centerY + 120);
-                } else {
+                    this.ctx.fillText('High Score: ' + (localStorage.getItem('highScore') || 0), centerX, centerY + 170);
+                    
+                    // Display selected skin preview on the right
+                    this.renderSkinPreview(600, 180);
+                    
+                } else if (this.showInstructions) {
                     // Instructions screen
                     this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
                     this.ctx.fillRect(50, 50, 700, 300);
@@ -1331,6 +1793,529 @@
                     this.ctx.textAlign = 'center';
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillText('BACK', centerX, 360);
+                } else if (this.showCustomization) {
+                    // Customization screen
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.fillRect(50, 50, 700, 300);
+                    
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('CUSTOMIZE YOUR GAME', centerX, 90);
+                    
+                    // Shooter skins
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText('Shooter Skins:', 80, 130);
+                    
+                    let skinX = 80;
+                    for (const [key, skin] of Object.entries(this.skins)) {
+                        const isSelected = this.selectedSkin === key;
+                        
+                        // Button background
+                        this.ctx.fillStyle = isSelected ? skin.color : '#444444';
+                        this.ctx.fillRect(skinX, 140, 120, 40);
+                        
+                        if (isSelected) {
+                            this.ctx.strokeStyle = '#FFD700';
+                            this.ctx.lineWidth = 3;
+                            this.ctx.strokeRect(skinX, 140, 120, 40);
+                        }
+                        
+                        this.ctx.font = '16px Arial';
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(skin.name, skinX + 60, 165);
+                        
+                        skinX += 130;
+                    }
+                    
+                    // Fuel colors
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText('Fuel Colors:', 80, 210);
+                    
+                    let fuelX = 80;
+                    for (const [key, fuel] of Object.entries(this.fuelColors)) {
+                        const isSelected = this.selectedFuelColor === key;
+                        
+                        // Button background
+                        this.ctx.fillStyle = isSelected ? fuel.color : '#444444';
+                        this.ctx.fillRect(fuelX, 220, 120, 40);
+                        
+                        if (isSelected) {
+                            this.ctx.strokeStyle = '#FFD700';
+                            this.ctx.lineWidth = 3;
+                            this.ctx.strokeRect(fuelX, 220, 120, 40);
+                        }
+                        
+                        this.ctx.font = '16px Arial';
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(fuel.name, fuelX + 60, 245);
+                        
+                        fuelX += 130;
+                    }
+                    
+                    // Back button
+                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillRect(centerX - 50, 290, 100, 40);
+                    this.ctx.strokeStyle = '#D84315';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 50, 290, 100, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('BACK', centerX, 310);
+                } else if (this.showLeaderboard) {
+                    // Leaderboard screen
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.fillRect(50, 50, 700, 300);
+                    
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('LEADERBOARD', centerX, 90);
+                    
+                    // Leaderboard headers
+                    this.ctx.font = 'bold 18px Arial';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.fillText('Rank', 100, 130);
+                    this.ctx.fillText('Name', 180, 130);
+                    this.ctx.fillText('Score', 400, 130);
+                    this.ctx.fillText('Wave', 500, 130);
+                    this.ctx.fillText('Date', 600, 130);
+                    
+                    // Draw leaderboard entries
+                    this.ctx.font = '16px Arial';
+                    this.leaderboard = this.loadLeaderboard(); // Refresh leaderboard
+                    const displayCount = Math.min(this.leaderboard.length, 8);
+                    
+                    for (let i = 0; i < displayCount; i++) {
+                        const entry = this.leaderboard[i];
+                        const y = 160 + i * 25;
+                        
+                        // Highlight top 3
+                        if (i < 3) {
+                            const colors = ['#FFD700', '#C0C0C0', '#CD7F32']; // Gold, Silver, Bronze
+                            this.ctx.fillStyle = colors[i];
+                        } else {
+                            this.ctx.fillStyle = '#FFFFFF';
+                        }
+                        
+                        this.ctx.fillText(`#${i + 1}`, 100, y);
+                        this.ctx.fillText(entry.name, 180, y);
+                        this.ctx.fillText(entry.score.toString(), 400, y);
+                        this.ctx.fillText(entry.wave.toString(), 500, y);
+                        this.ctx.fillText(entry.date, 600, y);
+                    }
+                    
+                    if (this.leaderboard.length === 0) {
+                        this.ctx.fillStyle = '#CCCCCC';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.font = '20px Arial';
+                        this.ctx.fillText('No scores yet. Be the first to play!', centerX, 200);
+                    }
+                    
+                    // Back button
+                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillRect(centerX - 50, 340, 100, 40);
+                    this.ctx.strokeStyle = '#D84315';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 50, 340, 100, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('BACK', centerX, 360);
+                }
+            }
+            
+            handlePowerUpClick() {
+                const centerX = 400;
+                const baseY = 150;
+                const buttonHeight = 60;
+                const buttonWidth = 400;
+                const spacing = 10;
+                
+                // Check which power-up button was clicked
+                for (let i = 0; i < this.powerUpTypes.length; i++) {
+                    const buttonY = baseY + i * (buttonHeight + spacing);
+                    
+                    if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
+                        this.mouse.y > buttonY && this.mouse.y < buttonY + buttonHeight) {
+                        this.selectPowerUp(i);
+                        this.playSound('powerup');
+                        break;
+                    }
+                }
+                
+                // Check skip button
+                const skipY = baseY + this.powerUpTypes.length * (buttonHeight + spacing) + 20;
+                if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
+                    this.mouse.y > skipY && this.mouse.y < skipY + 40) {
+                    this.selectPowerUp(-1); // No power-up
+                }
+            }
+            
+            renderPowerUpSelection() {
+                // Darken background
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                // Title
+                this.ctx.font = 'bold 36px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Choose Your Power-Up!', 400, 80);
+                
+                const powerUpInfo = {
+                    'rapidFire': {
+                        name: 'Rapid Fire',
+                        desc: 'Double your shooting speed!',
+                        color: '#FFD700',
+                        icon: '⚡'
+                    },
+                    'doubleDamage': {
+                        name: 'Double Damage',
+                        desc: 'Each shot deals 2x damage!',
+                        color: '#FF69B4',
+                        icon: '💥'
+                    },
+                    'spreadShot': {
+                        name: 'Spread Shot',
+                        desc: 'Fire 3 bullets at once!',
+                        color: '#00CED1',
+                        icon: '🎯'
+                    }
+                };
+                
+                // Render power-up buttons
+                const centerX = 400;
+                const baseY = 150;
+                const buttonHeight = 60;
+                const buttonWidth = 400;
+                const spacing = 10;
+                
+                for (let i = 0; i < this.powerUpTypes.length; i++) {
+                    const type = this.powerUpTypes[i];
+                    const info = powerUpInfo[type];
+                    const buttonY = baseY + i * (buttonHeight + spacing);
+                    
+                    // Button background with gradient
+                    const gradient = this.ctx.createLinearGradient(centerX - buttonWidth/2, buttonY, centerX + buttonWidth/2, buttonY);
+                    gradient.addColorStop(0, info.color);
+                    gradient.addColorStop(0.5, this.adjustColor(info.color, 1.2));
+                    gradient.addColorStop(1, info.color);
+                    
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.fillRect(centerX - buttonWidth/2, buttonY, buttonWidth, buttonHeight);
+                    
+                    // Button border
+                    this.ctx.strokeStyle = '#FFFFFF';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(centerX - buttonWidth/2, buttonY, buttonWidth, buttonHeight);
+                    
+                    // Icon
+                    this.ctx.font = '32px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText(info.icon, centerX - buttonWidth/2 + 20, buttonY + 40);
+                    
+                    // Name
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText(info.name, centerX - buttonWidth/2 + 70, buttonY + 25);
+                    
+                    // Description
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#EEEEEE';
+                    this.ctx.fillText(info.desc, centerX - buttonWidth/2 + 70, buttonY + 45);
+                }
+                
+                // Skip button
+                const skipY = baseY + this.powerUpTypes.length * (buttonHeight + spacing) + 20;
+                this.ctx.fillStyle = '#666666';
+                this.ctx.fillRect(centerX - 100, skipY, 200, 40);
+                this.ctx.strokeStyle = '#444444';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(centerX - 100, skipY, 200, 40);
+                
+                this.ctx.font = '20px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Skip Power-Up', centerX, skipY + 25);
+            }
+            
+            adjustColor(color, brightness) {
+                // Adjust color brightness for gradients
+                const hex = color.replace('#', '');
+                const r = parseInt(hex.substr(0, 2), 16);
+                const g = parseInt(hex.substr(2, 2), 16);
+                const b = parseInt(hex.substr(4, 2), 16);
+                
+                const adjust = (c) => Math.min(255, Math.floor(c * brightness));
+                
+                return `#${adjust(r).toString(16).padStart(2, '0')}${adjust(g).toString(16).padStart(2, '0')}${adjust(b).toString(16).padStart(2, '0')}`;
+            }
+            
+            handleGameOverClick() {
+                const centerX = 400;
+                const centerY = 200;
+                
+                if (!this.gameOverNameSubmitted) {
+                    // Check submit button
+                    if (this.mouse.x > centerX - 80 && this.mouse.x < centerX + 80 &&
+                        this.mouse.y > centerY + 40 && this.mouse.y < centerY + 80) {
+                        this.submitGameOverName();
+                    }
+                } else {
+                    // Check restart button
+                    if (this.mouse.x > centerX - 80 && this.mouse.x < centerX + 80 &&
+                        this.mouse.y > centerY + 100 && this.mouse.y < centerY + 140) {
+                        this.returnToMenuFromGameOver();
+                    }
+                }
+            }
+            
+            renderGameOver() {
+                // Dark overlay
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                const centerX = 400;
+                const centerY = 200;
+                
+                // Game Over title
+                this.ctx.font = 'bold 48px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillStyle = '#FF6B6B';
+                this.ctx.fillText('GAME OVER', centerX, 80);
+                
+                // Score and wave
+                this.ctx.font = '24px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText(`Wave: ${this.wave} | Score: ${this.score}`, centerX, 120);
+                
+                if (!this.gameOverNameSubmitted) {
+                    // Name input prompt
+                    this.ctx.font = '20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('Enter your name for the leaderboard:', centerX, centerY - 40);
+                    
+                    // Name input box
+                    this.ctx.fillStyle = '#333333';
+                    this.ctx.fillRect(centerX - 150, centerY - 20, 300, 40);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 150, centerY - 20, 300, 40);
+                    
+                    // Display typed name
+                    this.ctx.font = '18px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText(this.gameOverName + (Date.now() % 1000 < 500 ? '_' : ''), centerX - 140, centerY + 5);
+                    
+                    // Submit button
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(centerX - 80, centerY + 40, 160, 40);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 80, centerY + 40, 160, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Submit', centerX, centerY + 65);
+                    
+                    // Instructions
+                    this.ctx.font = '14px Arial';
+                    this.ctx.fillStyle = '#CCCCCC';
+                    this.ctx.fillText('Type your name and press Enter or click Submit', centerX, centerY + 110);
+                } else {
+                    // Show leaderboard position
+                    this.ctx.font = '24px Arial';
+                    this.ctx.fillStyle = '#FFD700';
+                    const position = this.leaderboard.findIndex(entry => entry.score === this.score && entry.name === (this.gameOverName || 'Anonymous')) + 1;
+                    if (position > 0 && position <= 10) {
+                        this.ctx.fillText(`You ranked #${position} on the leaderboard!`, centerX, centerY);
+                    } else {
+                        this.ctx.fillText('Thanks for playing!', centerX, centerY);
+                    }
+                    
+                    // Restart button
+                    this.ctx.fillStyle = '#2196F3';
+                    this.ctx.fillRect(centerX - 80, centerY + 100, 160, 40);
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 80, centerY + 100, 160, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('Main Menu', centerX, centerY + 125);
+                }
+            }
+            
+            renderSkinPreview(x, y) {
+                // Draw a preview of the selected gun skin
+                const skin = this.skins[this.selectedSkin];
+                const gunGradient = this.ctx.createLinearGradient(x, y, x, y + 40);
+                gunGradient.addColorStop(0, skin.gradient[0]);
+                gunGradient.addColorStop(0.5, skin.gradient[1]);
+                gunGradient.addColorStop(1, skin.gradient[2]);
+                
+                this.ctx.fillStyle = gunGradient;
+                this.ctx.fillRect(x, y, 80, 40);
+                
+                // Different visual designs for each skin preview
+                const detailColor = this.adjustColor(skin.gradient[2], 0.7);
+                
+                if (this.selectedSkin === 'default') {
+                    // Classic design
+                    this.ctx.fillStyle = detailColor;
+                    this.ctx.fillRect(x + 10, y + 16, 60, 8);
+                    this.ctx.fillRect(x + 35, y - 10, 10, 10);
+                    
+                    this.ctx.fillStyle = this.adjustColor(skin.gradient[1], 0.8);
+                    this.ctx.fillRect(x + 4, y + 4, 12, 32);
+                    this.ctx.fillRect(x + 64, y + 4, 12, 32);
+                    
+                } else if (this.selectedSkin === 'red') {
+                    // Crimson design
+                    this.ctx.fillStyle = detailColor;
+                    this.ctx.fillRect(x + 35, y - 16, 10, 16);
+                    for (let i = 0; i < 3; i++) {
+                        const fx = x + 16 + i * 20;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(fx, y + 36);
+                        this.ctx.lineTo(fx + 6, y + 10);
+                        this.ctx.lineTo(fx + 12, y + 36);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                    
+                } else if (this.selectedSkin === 'green') {
+                    // Forest design
+                    this.ctx.fillStyle = detailColor;
+                    this.ctx.fillRect(x + 36, y - 12, 8, 12);
+                    
+                    this.ctx.fillStyle = this.adjustColor('#4ADE80', 0.8);
+                    for (let i = 0; i < 4; i++) {
+                        const lx = x + 10 + i * 18;
+                        const ly = y + 20;
+                        this.ctx.beginPath();
+                        this.ctx.ellipse(lx, ly, 6, 10, Math.PI / 4, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                    
+                } else if (this.selectedSkin === 'purple') {
+                    // Royal design
+                    this.ctx.fillStyle = detailColor;
+                    for (let i = 0; i < 3; i++) {
+                        const cx = x + 30 + i * 10;
+                        this.ctx.fillRect(cx, y - 8 - (i === 1 ? 8 : 0), 8, 8 + (i === 1 ? 8 : 0));
+                    }
+                    
+                    this.ctx.fillStyle = this.adjustColor('#E0AAFF', 1.2);
+                    for (let i = 0; i < 3; i++) {
+                        const gx = x + 16 + i * 22;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(gx, y + 10);
+                        this.ctx.lineTo(gx + 6, y + 16);
+                        this.ctx.lineTo(gx, y + 22);
+                        this.ctx.lineTo(gx - 6, y + 16);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                    
+                } else if (this.selectedSkin === 'gold') {
+                    // Golden design
+                    this.ctx.fillStyle = detailColor;
+                    this.ctx.fillRect(x + 30, y - 12, 8, 12);
+                    this.ctx.fillRect(x + 42, y - 12, 8, 12);
+                    
+                    this.ctx.fillStyle = this.adjustColor('#FFF59D', 1.2);
+                    for (let i = 0; i < 3; i++) {
+                        const sx = x + 16 + i * 24;
+                        const sy = y + 20;
+                        this.ctx.beginPath();
+                        for (let j = 0; j < 5; j++) {
+                            const angle = (j * 72 - 90) * Math.PI / 180;
+                            const r = j % 2 === 0 ? 6 : 3;
+                            const px = sx + Math.cos(angle) * r;
+                            const py = sy + Math.sin(angle) * r;
+                            if (j === 0) this.ctx.moveTo(px, py);
+                            else this.ctx.lineTo(px, py);
+                        }
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                }
+                
+                // Gun outline
+                this.ctx.strokeStyle = detailColor;
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x, y, 80, 40);
+                
+                // Label
+                this.ctx.font = '14px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Selected Skin', x + 40, y + 60);
+            }
+            
+            renderMenuBackground() {
+                // Render dirt texture background for menu
+                for (let y = 12; y < 80; y++) {
+                    for (let x = 0; x < 160; x++) {
+                        const px = x * CONFIG.CELL_SIZE;
+                        const py = y * CONFIG.CELL_SIZE;
+                        
+                        // Varied sand colors for texture
+                        const sandVariation = (x * 7 + y * 13) % 5;
+                        const sandColors = ['#C19A6B', '#B8860B', '#D2691E', '#CD853F', '#DEB887'];
+                        this.ctx.fillStyle = sandColors[sandVariation];
+                        this.ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+                    }
+                }
+                
+                // Add a decorative pipe at the top
+                const pipeX = 400;
+                const pipeY = 30;
+                const pipeWidth = 100;
+                
+                // Pipe base
+                this.ctx.fillStyle = '#333333';
+                this.ctx.fillRect(pipeX - pipeWidth/2 - 5, pipeY - 20, pipeWidth + 10, 25);
+                
+                // Pipe body with gradient
+                const pipeGradient = this.ctx.createLinearGradient(pipeX - pipeWidth/2, pipeY, pipeX + pipeWidth/2, pipeY);
+                pipeGradient.addColorStop(0, '#555555');
+                pipeGradient.addColorStop(0.5, '#777777');
+                pipeGradient.addColorStop(1, '#555555');
+                this.ctx.fillStyle = pipeGradient;
+                this.ctx.fillRect(pipeX - pipeWidth/2, pipeY - 15, pipeWidth, 30);
+                
+                // Pipe end
+                this.ctx.fillStyle = '#666666';
+                this.ctx.fillRect(pipeX - pipeWidth/2 - 10, pipeY + 15, pipeWidth + 20, 15);
+                
+                // Pipe highlights
+                this.ctx.fillStyle = '#999999';
+                this.ctx.fillRect(pipeX - pipeWidth/2, pipeY - 15, pipeWidth, 3);
+                
+                // Water droplets animation
+                for (let i = 0; i < 3; i++) {
+                    const dropY = (Date.now() * 0.1 + i * 100) % 300 + 50;
+                    const dropX = pipeX + (i - 1) * 15;
+                    const fuelColor = this.fuelColors[this.selectedFuelColor] || this.fuelColors.blue;
+                    this.ctx.fillStyle = fuelColor.color;
+                    this.ctx.beginPath();
+                    this.ctx.arc(dropX, dropY, 3, 0, Math.PI * 2);
+                    this.ctx.fill();
                 }
             }
 
@@ -1423,11 +2408,13 @@
                     const fillHeight = tankHeight * (this.fuelLevel / 100);
                     const fillY = tankY + (tankHeight - fillHeight);
                     
-                    // Water gradient matching the flowing water
+                    // Water gradient matching the selected fuel color
+                    const fuelColor = this.fuelColors[this.selectedFuelColor] || this.fuelColors.blue;
+                    const rgb = this.hexToRgb(fuelColor.color);
                     const waterGradient = this.ctx.createLinearGradient(tankX, fillY, tankX, tankY + tankHeight);
-                    waterGradient.addColorStop(0, 'rgba(64, 164, 223, 0.9)');
-                    waterGradient.addColorStop(0.3, 'rgba(41, 128, 185, 0.95)');
-                    waterGradient.addColorStop(1, 'rgba(21, 101, 192, 1)');
+                    waterGradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)`);
+                    waterGradient.addColorStop(0.3, `rgba(${rgb.r * 0.8}, ${rgb.g * 0.8}, ${rgb.b * 0.8}, 0.95)`);
+                    waterGradient.addColorStop(1, `rgba(${rgb.r * 0.6}, ${rgb.g * 0.6}, ${rgb.b * 0.6}, 1)`);
                     
                     this.ctx.fillStyle = waterGradient;
                     this.ctx.fillRect(tankX + 4, fillY, tankWidth - 8, fillHeight - 4);
@@ -1541,11 +2528,13 @@
                             const height = CONFIG.CELL_SIZE * water;
                             const topY = py + CONFIG.CELL_SIZE - height;
                             
-                            // Create gradient for water depth
+                            // Create gradient for water depth with selected fuel color
+                            const fuelColor = this.fuelColors[this.selectedFuelColor] || this.fuelColors.blue;
+                            const rgb = this.hexToRgb(fuelColor.color);
                             const gradient = this.ctx.createLinearGradient(px, topY, px, py + CONFIG.CELL_SIZE);
-                            gradient.addColorStop(0, 'rgba(64, 164, 223, 0.85)');
-                            gradient.addColorStop(0.3, 'rgba(41, 128, 185, 0.9)');
-                            gradient.addColorStop(1, 'rgba(21, 101, 192, 0.95)');
+                            gradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.85)`);
+                            gradient.addColorStop(0.3, `rgba(${rgb.r * 0.8}, ${rgb.g * 0.8}, ${rgb.b * 0.8}, 0.9)`);
+                            gradient.addColorStop(1, `rgba(${rgb.r * 0.6}, ${rgb.g * 0.6}, ${rgb.b * 0.6}, 0.95)`);
                             
                             this.ctx.fillStyle = gradient;
                             this.ctx.fillRect(px, topY, CONFIG.CELL_SIZE, height);
@@ -1573,37 +2562,197 @@
                         }
                     }
                 }
+                
+                // Render power-up diamonds
+                for (const powerUp of this.powerUps) {
+                    if (!powerUp.collected) {
+                        const px = powerUp.x * CONFIG.CELL_SIZE;
+                        const py = powerUp.y * CONFIG.CELL_SIZE;
+                        const size = CONFIG.CELL_SIZE * 2;
+                        
+                        // Diamond shape
+                        this.ctx.save();
+                        this.ctx.translate(px, py);
+                        
+                        // Diamond gradient
+                        const diamondGradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, size);
+                        if (powerUp.type === 'rapidFire') {
+                            diamondGradient.addColorStop(0, '#FFD700');
+                            diamondGradient.addColorStop(0.5, '#FFA500');
+                            diamondGradient.addColorStop(1, '#FF8C00');
+                        } else if (powerUp.type === 'doubleDamage') {
+                            diamondGradient.addColorStop(0, '#FF69B4');
+                            diamondGradient.addColorStop(0.5, '#FF1493');
+                            diamondGradient.addColorStop(1, '#C71585');
+                        } else {
+                            diamondGradient.addColorStop(0, '#00CED1');
+                            diamondGradient.addColorStop(0.5, '#00BFFF');
+                            diamondGradient.addColorStop(1, '#4169E1');
+                        }
+                        
+                        this.ctx.fillStyle = diamondGradient;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(0, -size);
+                        this.ctx.lineTo(size, 0);
+                        this.ctx.lineTo(0, size);
+                        this.ctx.lineTo(-size, 0);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                        
+                        // Diamond shine
+                        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(0, -size * 0.8);
+                        this.ctx.lineTo(size * 0.3, -size * 0.3);
+                        this.ctx.lineTo(0, 0);
+                        this.ctx.lineTo(-size * 0.3, -size * 0.3);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                        
+                        // Sparkle effect
+                        const time = Date.now() * 0.002;
+                        const sparkle = Math.sin(time + powerUp.x + powerUp.y) * 0.5 + 0.5;
+                        this.ctx.fillStyle = `rgba(255, 255, 255, ${sparkle * 0.8})`;
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (Math.PI / 2) * i + time * 0.5;
+                            const dist = size * 1.5;
+                            this.ctx.beginPath();
+                            this.ctx.arc(Math.cos(angle) * dist, Math.sin(angle) * dist, 2, 0, Math.PI * 2);
+                            this.ctx.fill();
+                        }
+                        
+                        this.ctx.restore();
+                    }
+                }
             }
 
             renderPhase2() {
-                // Render impact particles
+                // Render impact particles with enhanced effects
                 for (const particle of this.impactParticles) {
                     const alpha = particle.life / particle.maxLife;
-                    this.ctx.fillStyle = `rgba(255, 165, 0, ${alpha})`;
+                    this.ctx.fillStyle = particle.color ? `${particle.color}${alpha})` : `rgba(255, 165, 0, ${alpha})`;
                     this.ctx.beginPath();
-                    this.ctx.arc(particle.x, particle.y, 3 * alpha, 0, Math.PI * 2);
+                    const size = (particle.size || 3) * alpha;
+                    this.ctx.arc(particle.x, particle.y, size, 0, Math.PI * 2);
                     this.ctx.fill();
+                    
+                    // Add glow effect for larger particles
+                    if (size > 2) {
+                        this.ctx.fillStyle = particle.color ? `${particle.color}${alpha * 0.3})` : `rgba(255, 200, 0, ${alpha * 0.3})`;
+                        this.ctx.beginPath();
+                        this.ctx.arc(particle.x, particle.y, size * 1.5, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
                 }
                 
                 // Render enhanced gun
-                // Gun barrel gradient
+                // Gun barrel gradient based on selected skin
+                const skin = this.skins[this.selectedSkin];
                 const gunGradient = this.ctx.createLinearGradient(this.gun.x, this.gun.y, this.gun.x, this.gun.y + this.gun.height);
-                gunGradient.addColorStop(0, '#5C7CFA');
-                gunGradient.addColorStop(0.3, '#4169E1');
-                gunGradient.addColorStop(0.7, '#364FC7');
-                gunGradient.addColorStop(1, '#2C3E96');
+                gunGradient.addColorStop(0, skin.gradient[0]);
+                gunGradient.addColorStop(0.5, skin.gradient[1]);
+                gunGradient.addColorStop(1, skin.gradient[2]);
                 
                 // Gun body
                 this.ctx.fillStyle = gunGradient;
                 this.ctx.fillRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
                 
-                // Gun details
-                this.ctx.fillStyle = '#1E2A78';
-                this.ctx.fillRect(this.gun.x + 5, this.gun.y + 5, this.gun.width - 10, 3);
-                this.ctx.fillRect(this.gun.x + this.gun.width/2 - 2, this.gun.y - 4, 4, 4);
+                // Different visual designs for each skin
+                const detailColor = this.adjustColor(skin.gradient[2], 0.7);
+                
+                if (this.selectedSkin === 'default') {
+                    // Classic design - simple with center line
+                    this.ctx.fillStyle = detailColor;
+                    this.ctx.fillRect(this.gun.x + 5, this.gun.y + 8, this.gun.width - 10, 4);
+                    this.ctx.fillRect(this.gun.x + this.gun.width/2 - 2, this.gun.y - 5, 4, 5);
+                    
+                    // Side panels
+                    this.ctx.fillStyle = this.adjustColor(skin.gradient[1], 0.8);
+                    this.ctx.fillRect(this.gun.x + 2, this.gun.y + 2, 6, this.gun.height - 4);
+                    this.ctx.fillRect(this.gun.x + this.gun.width - 8, this.gun.y + 2, 6, this.gun.height - 4);
+                    
+                } else if (this.selectedSkin === 'red') {
+                    // Crimson design - aggressive with spikes
+                    this.ctx.fillStyle = detailColor;
+                    // Main barrel
+                    this.ctx.fillRect(this.gun.x + this.gun.width/2 - 3, this.gun.y - 8, 6, 8);
+                    // Flame patterns
+                    for (let i = 0; i < 3; i++) {
+                        const x = this.gun.x + 8 + i * 12;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(x, this.gun.y + this.gun.height - 2);
+                        this.ctx.lineTo(x + 3, this.gun.y + 5);
+                        this.ctx.lineTo(x + 6, this.gun.y + this.gun.height - 2);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                    
+                } else if (this.selectedSkin === 'green') {
+                    // Forest design - organic with leaves
+                    this.ctx.fillStyle = detailColor;
+                    // Center vine
+                    this.ctx.fillRect(this.gun.x + this.gun.width/2 - 2, this.gun.y - 6, 4, 6);
+                    
+                    // Leaf patterns
+                    this.ctx.fillStyle = this.adjustColor('#4ADE80', 0.8);
+                    for (let i = 0; i < 4; i++) {
+                        const x = this.gun.x + 5 + i * 10;
+                        const y = this.gun.y + 7;
+                        this.ctx.beginPath();
+                        this.ctx.ellipse(x, y, 4, 6, Math.PI / 4, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                    
+                } else if (this.selectedSkin === 'purple') {
+                    // Royal design - elegant with gems
+                    this.ctx.fillStyle = detailColor;
+                    // Crown-like top
+                    for (let i = 0; i < 3; i++) {
+                        const x = this.gun.x + this.gun.width/2 - 6 + i * 6;
+                        this.ctx.fillRect(x, this.gun.y - 4 - (i === 1 ? 4 : 0), 4, 4 + (i === 1 ? 4 : 0));
+                    }
+                    
+                    // Gem accents
+                    this.ctx.fillStyle = this.adjustColor('#E0AAFF', 1.2);
+                    for (let i = 0; i < 3; i++) {
+                        const x = this.gun.x + 10 + i * 13;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(x, this.gun.y + 5);
+                        this.ctx.lineTo(x + 3, this.gun.y + 8);
+                        this.ctx.lineTo(x, this.gun.y + 11);
+                        this.ctx.lineTo(x - 3, this.gun.y + 8);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                    
+                } else if (this.selectedSkin === 'gold') {
+                    // Golden design - luxurious with stars
+                    this.ctx.fillStyle = detailColor;
+                    // Double barrel
+                    this.ctx.fillRect(this.gun.x + this.gun.width/2 - 5, this.gun.y - 6, 4, 6);
+                    this.ctx.fillRect(this.gun.x + this.gun.width/2 + 1, this.gun.y - 6, 4, 6);
+                    
+                    // Star decorations
+                    this.ctx.fillStyle = this.adjustColor('#FFF59D', 1.2);
+                    for (let i = 0; i < 3; i++) {
+                        const cx = this.gun.x + 10 + i * 15;
+                        const cy = this.gun.y + 10;
+                        this.ctx.beginPath();
+                        for (let j = 0; j < 5; j++) {
+                            const angle = (j * 72 - 90) * Math.PI / 180;
+                            const r = j % 2 === 0 ? 4 : 2;
+                            const x = cx + Math.cos(angle) * r;
+                            const y = cy + Math.sin(angle) * r;
+                            if (j === 0) this.ctx.moveTo(x, y);
+                            else this.ctx.lineTo(x, y);
+                        }
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                    }
+                }
                 
                 // Gun outline
-                this.ctx.strokeStyle = '#1A237E';
+                this.ctx.strokeStyle = detailColor;
                 this.ctx.lineWidth = 2;
                 this.ctx.strokeRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
                 
@@ -1726,7 +2875,9 @@
                 if (this.currentState === GAME_STATE.PHASE1) {
                     this.updatePhase1();
                 } else if (this.currentState === GAME_STATE.PHASE2) {
-                    this.updatePhase2();
+                    if (!this.showingPowerUpSelection) {
+                        this.updatePhase2();
+                    }
                 }
                 
                 // Update UI
