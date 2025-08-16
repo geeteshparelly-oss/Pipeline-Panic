@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Panic</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a2e;
+            font-family: 'Courier New', monospace;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        h1 {
+            color: #ff6b6b;
+            text-align: center;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        #gameContainer {
+            border: 3px solid #4ecdc4;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(78, 205, 196, 0.3);
+            background: #16213e;
+            padding: 10px;
+        }
+
+        canvas {
+            background: #87ceeb;
+            display: block;
+            cursor: crosshair;
+        }
+
+        #ui {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 800px;
+            margin-top: 10px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        #leftUI {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        #rightUI {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+
+        #centerUI {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .ui-element {
+            margin: 5px 0;
+            padding: 5px 10px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 5px;
+        }
+
+        #timerBar {
+            width: 300px;
+            height: 20px;
+            background: #333;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        #timerFill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff6b6b, #feca57);
+            transition: width 0.1s linear;
+        }
+
+        #instructions {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 14px;
+            color: #4ecdc4;
+        }
+
+        #phaseIndicator {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff6b6b;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <h1>🚰 Pipeline Panic 🚰</h1>
+    
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="400"></canvas>
+    </div>
+
+    <div id="ui">
+        <div id="leftUI">
+            <div class="ui-element">
+                🎯 Ammo: <span id="ammoCount">0</span>
+            </div>
+            <div class="ui-element">
+                <div style="display: flex; align-items: center;">
+                    ⛽ Tank: 
+                    <div id="tankContainer" style="width: 80px; height: 20px; border: 2px solid #fff; margin-left: 10px; position: relative; background: #333;">
+                        <div id="tankFill" style="height: 100%; background: linear-gradient(90deg, #00BFFF, #00FFFF); width: 0%; transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="centerUI">
+            <div class="ui-element" id="phaseIndicator">PHASE 1: COLLECT AMMO</div>
+            <div id="timerBar">
+                <div id="timerFill" style="width: 100%"></div>
+            </div>
+        </div>
+        
+        <div id="rightUI">
+            <div class="ui-element">
+                🏆 Wave: <span id="waveCount">1</span>
+            </div>
+            <div class="ui-element">
+                💯 Score: <span id="score">0</span>
+            </div>
+            <div class="ui-element">
+                <button id="exitButton" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">Exit</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <strong>Phase 1:</strong> Click and drag to dig small tunnels • Water flows after 3-2-1 countdown • Get ANY fuel to tank!<br>
+        <strong>Phase 2:</strong> A/D or ←/→ to move gun • Unlimited auto-fire • Destroy boulders within 1 minute!
+    </div>
+
+    <script>
+        // Game Configuration
+        const CONFIG = {
+            GRID_WIDTH: 160,
+            GRID_HEIGHT: 80,
+            CELL_SIZE: 5,
+            AMMO_PHASE_TIME: 15000, // 15 seconds
+            BOULDER_PHASE_TIME: 60000, // 1 minute for boulder phase
+            GRAVITY: 0.2,
+            GUN_SPEED: 5,
+            BULLET_SPEED: 8,
+            // Polish parameters
+            MIN_BOUNCE_HEIGHT: 12.0,
+            BOUNCE_VARIATION: 0.15,
+            AUTO_FIRE_RATE: 150, // milliseconds between shots
+            DIG_RADIUS: 2.0, // radius in grid cells for fine dirt
+            CAMERA_SHAKE_INTENSITY: 4,
+            PARTICLE_COUNT: 12,
+            // Water simulation parameters
+            WATER_FLOW_RATE: 0.3, // Reduced water flow from tap
+            WATER_PRESSURE: 0.3, // Less aggressive horizontal spread
+            WATER_VISCOSITY: 0.98, // Slightly thicker water
+            MAX_WATER_PER_CELL: 1.0, // Maximum water in a cell
+            MIN_WATER_FLOW: 0.02, // Minimum water to flow
+            TAP_WIDTH: 4, // Width of tap in grid cells
+            TAP_X: 80, // X position of tap in grid
+            TAP_Y: 5 // Y position of tap in grid
+        };
+
+        // Terrain Types
+        const TERRAIN = {
+            SKY: 0,
+            SAND: 1,
+            WALL: 2,
+            TANK: 3
+        };
+
+        // Game States
+        const GAME_STATE = {
+            MENU: 'menu',
+            PHASE1: 'phase1',
+            PHASE2: 'phase2',
+            GAME_OVER: 'game_over'
+        };
+
+        // Game Class
+        class PipelinePanicGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                
+                // Game state
+                this.currentState = GAME_STATE.MENU;
+                this.wave = 1;
+                this.score = 0;
+                this.ammoCount = 0;
+                this.fuelCollected = 0;
+                this.showInstructions = false;
+                
+                // Phase 1 variables
+                this.grid = [];
+                this.waterGrid = []; // Grid-based water simulation
+                this.waterFlowing = false;
+                this.countdownTimer = 3000; // 3 second countdown
+                this.phaseStarted = false;
+                this.phaseTimer = CONFIG.AMMO_PHASE_TIME;
+                this.fuelLevel = 0; // Gradual fuel level 0-100
+                this.dustParticles = [];
+                
+                // Phase 2 variables
+                this.gun = { x: 400, y: 380, width: 40, height: 20 };
+                this.bullets = [];
+                this.boulders = [];
+                this.lastAutoFire = 0;
+                this.impactParticles = [];
+                this.boulderPhaseTimer = CONFIG.BOULDER_PHASE_TIME;
+                this.transitioning = false; // Flag to prevent multiple wave transitions
+                this.pendingSplits = []; // Array to store boulders that will split
+                
+                // Visual effects
+                this.cameraShake = { x: 0, y: 0, intensity: 0 };
+                this.muzzleFlash = 0;
+                this.backgroundIndex = 0;
+                this.backgrounds = [
+                    '#1a237e', // Night forest
+                    '#388e3c', // Bright grassland  
+                    '#ff7043', // Colorful horizon
+                    '#8d6e63'  // Desert ruins
+                ];
+                
+                // Input handling
+                this.keys = {};
+                this.mouse = { x: 0, y: 0, down: false };
+                
+                this.updateUI(); // Hide UI initially since we're in menu
+                this.setupEventListeners();
+                this.gameLoop();
+            }
+
+            startGame() {
+                this.currentState = GAME_STATE.PHASE1;
+                this.wave = 1;
+                this.score = 0;
+                this.fuelLevel = 0;
+                this.phaseStarted = false;
+                this.countdownTimer = 3000;
+                this.showInstructions = false;
+                this.initializeGrid();
+                this.updateUI();
+            }
+
+            initializeGrid() {
+                // Create grid for Phase 1 (much finer cells for realistic dirt)
+                this.grid = [];
+                this.waterGrid = [];
+                
+                for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
+                    this.grid[y] = [];
+                    this.waterGrid[y] = [];
+                    for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
+                        if (y < 12) {
+                            this.grid[y][x] = TERRAIN.SKY;
+                        } else if (y < 68) {
+                            this.grid[y][x] = TERRAIN.SAND;
+                        } else {
+                            this.grid[y][x] = TERRAIN.WALL;
+                        }
+                        this.waterGrid[y][x] = 0; // Initialize water amount to 0
+                    }
+                }
+                
+                // Always randomize tank and tap positions
+                if (this.wave === 1) {
+                    // First wave - easier positions
+                    this.tankX = Math.floor(Math.random() * 2) * 120; // Far left or far right
+                    this.tankY = 60;
+                    this.tapX = 60 + Math.floor(Math.random() * 40);
+                    this.tapY = 5;
+                } else {
+                    // All other waves - full randomization
+                    // Tank can be left, middle, or right
+                    const tankPositions = [0, 64, 128];
+                    this.tankX = tankPositions[Math.floor(Math.random() * tankPositions.length)];
+                    this.tankY = 55 + Math.floor(Math.random() * 10);
+                    
+                    // Tap position varies widely
+                    this.tapX = 20 + Math.floor(Math.random() * 120);
+                    this.tapY = 5 + Math.floor(Math.random() * 7);
+                    
+                    // Ensure tap isn't directly above tank for challenge
+                    if (Math.abs(this.tapX - this.tankX - 16) < 20) {
+                        this.tapX = (this.tapX + 60) % 140 + 20;
+                    }
+                }
+                
+                // Add tank area
+                const tankWidth = 32;
+                const tankHeight = 20;
+                for (let x = this.tankX; x < this.tankX + tankWidth && x < CONFIG.GRID_WIDTH; x++) {
+                    for (let y = this.tankY; y < this.tankY + tankHeight && y < CONFIG.GRID_HEIGHT; y++) {
+                        this.grid[y][x] = TERRAIN.TANK;
+                    }
+                }
+
+                // Add strategic walls between tap and tank
+                this.addStrategicWalls();
+                
+                // Reset phase started flag for countdown
+                this.phaseStarted = false;
+                this.countdownTimer = 3000;
+                this.waterFlowing = false;
+                
+                // Debug: Log positions
+                console.log(`Wave ${this.wave}: Tank at (${this.tankX}, ${this.tankY}), Tap at (${this.tapX}, ${this.tapY})`);
+            }
+            
+            addStrategicWalls() {
+                // Calculate path from tap to tank
+                const tapCenterX = this.tapX;
+                const tankCenterX = this.tankX + 16;
+                const pathStartY = this.tapY + 10;
+                const pathEndY = this.tankY - 5;
+                
+                // Add blocking wall in the direct path
+                if (this.wave > 1) {
+                    const blockY = Math.floor((pathStartY + pathEndY) / 2);
+                    const blockX = Math.floor((tapCenterX + tankCenterX) / 2);
+                    
+                    // Create a wall that forces water to go around
+                    for (let x = blockX - 10; x < blockX + 10; x++) {
+                        if (x >= 0 && x < CONFIG.GRID_WIDTH && this.grid[blockY][x] === TERRAIN.SAND) {
+                            this.grid[blockY][x] = TERRAIN.WALL;
+                        }
+                    }
+                }
+            }
+            
+            addWaveComplexity() {
+                // Progressive obstacle difficulty targeting paths to tank
+                if (this.wave <= 2) {
+                    // Waves 1-2: Simple obstacles near path
+                    this.addPathBlockers(1);
+                } else if (this.wave <= 5) {
+                    // Waves 3-5: More complex patterns
+                    this.addPathBlockers(2);
+                    this.addLShapedWalls(1);
+                } else if (this.wave <= 8) {
+                    // Waves 6-8: Challenging layouts
+                    this.addPathBlockers(2);
+                    this.addLShapedWalls(2);
+                    this.addFloatingPlatforms(this.wave - 5);
+                } else {
+                    // Waves 9+: Maximum complexity
+                    this.addPathBlockers(3);
+                    this.addLShapedWalls(2);
+                    this.addFloatingPlatforms(2);
+                    this.addMazeSection(Math.min(this.wave - 8, 3));
+                }
+            }
+            
+            addPathBlockers(count) {
+                // Add obstacles specifically in the path from tap to tank
+                const tapX = this.tapX;
+                const tankX = this.tankX + 16;
+                const tapY = this.tapY + 10;
+                const tankY = this.tankY;
+                
+                for (let i = 0; i < count; i++) {
+                    // Calculate a point along the path
+                    const t = (i + 1) / (count + 1);
+                    const blockX = Math.floor(tapX + (tankX - tapX) * t);
+                    const blockY = Math.floor(tapY + (tankY - tapY) * t);
+                    
+                    // Add obstacle near this point
+                    const size = 3 + Math.floor(Math.random() * 3);
+                    const offsetX = Math.floor((Math.random() - 0.5) * 20);
+                    const offsetY = Math.floor((Math.random() - 0.5) * 10);
+                    
+                    for (let dx = -size/2; dx < size/2; dx++) {
+                        for (let dy = -size/2; dy < size/2; dy++) {
+                            const x = blockX + offsetX + dx;
+                            const y = blockY + offsetY + dy;
+                            if (x >= 0 && x < CONFIG.GRID_WIDTH && y >= 0 && y < CONFIG.GRID_HEIGHT &&
+                                this.grid[y][x] === TERRAIN.SAND) {
+                                this.grid[y][x] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            addSimpleWalls(count) {
+                // This method is no longer used - replaced by addPathBlockers
+                // Keeping for backwards compatibility
+                this.addPathBlockers(count);
+            }
+            
+            addLShapedWalls(count) {
+                for (let i = 0; i < count; i++) {
+                    // Place L-shaped walls near the water flow path
+                    const targetX = this.tankX + 16 + (Math.random() - 0.5) * 60;
+                    const targetY = 30 + Math.floor(Math.random() * 20);
+                    
+                    const x = Math.max(10, Math.min(CONFIG.GRID_WIDTH - 20, Math.floor(targetX)));
+                    const y = Math.max(20, Math.min(50, targetY));
+                    
+                    // Horizontal part
+                    const hLength = 6 + Math.floor(Math.random() * 4);
+                    for (let dx = 0; dx < hLength; dx++) {
+                        if (x + dx < CONFIG.GRID_WIDTH && this.grid[y][x + dx] === TERRAIN.SAND) {
+                            this.grid[y][x + dx] = TERRAIN.WALL;
+                        }
+                    }
+                    
+                    // Vertical part
+                    const vLength = 4 + Math.floor(Math.random() * 4);
+                    const goUp = Math.random() < 0.5;
+                    for (let dy = 0; dy < vLength; dy++) {
+                        const yPos = goUp ? y - dy : y + dy;
+                        if (yPos >= 0 && yPos < CONFIG.GRID_HEIGHT && this.grid[yPos][x] === TERRAIN.SAND) {
+                            this.grid[yPos][x] = TERRAIN.WALL;
+                        }
+                    }
+                }
+            }
+            
+            addFloatingPlatforms(count) {
+                for (let i = 0; i < count; i++) {
+                    // Place platforms above the tank area to force indirect paths
+                    const baseX = this.tankX + Math.floor(Math.random() * 40) - 10;
+                    const x = Math.max(10, Math.min(CONFIG.GRID_WIDTH - 20, baseX));
+                    const y = this.tankY - 15 - Math.floor(Math.random() * 15);
+                    
+                    if (y > 20) {
+                        const width = 8 + Math.floor(Math.random() * 8);
+                        
+                        for (let dx = 0; dx < width; dx++) {
+                            if (x + dx < CONFIG.GRID_WIDTH && this.grid[y][x + dx] === TERRAIN.SAND) {
+                                this.grid[y][x + dx] = TERRAIN.WALL;
+                            }
+                        }
+                        
+                        // Add small vertical walls on ends sometimes
+                        if (Math.random() < 0.5) {
+                            for (let dy = 1; dy < 4; dy++) {
+                                if (y + dy < CONFIG.GRID_HEIGHT && this.grid[y + dy][x] === TERRAIN.SAND) {
+                                    this.grid[y + dy][x] = TERRAIN.WALL;
+                                }
+                                if (x + width - 1 < CONFIG.GRID_WIDTH && y + dy < CONFIG.GRID_HEIGHT && 
+                                    this.grid[y + dy][x + width - 1] === TERRAIN.SAND) {
+                                    this.grid[y + dy][x + width - 1] = TERRAIN.WALL;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            addMazeSection(complexity) {
+                // Place maze sections near tank approach
+                const mazeX = Math.max(10, Math.min(CONFIG.GRID_WIDTH - 40, 
+                    this.tankX + Math.floor((Math.random() - 0.5) * 40)));
+                const mazeY = Math.max(30, this.tankY - 25);
+                
+                // Create a maze that blocks direct access to tank
+                for (let i = 0; i < complexity; i++) {
+                    // Vertical walls with strategic gaps
+                    const wallHeight = 8 + Math.floor(Math.random() * 4);
+                    for (let y = 0; y < wallHeight; y++) {
+                        if (mazeY + y < CONFIG.GRID_HEIGHT && mazeX + i * 10 < CONFIG.GRID_WIDTH &&
+                            this.grid[mazeY + y][mazeX + i * 10] === TERRAIN.SAND) {
+                            // Add gaps for water flow
+                            if (y !== 3 && y !== wallHeight - 2) {
+                                this.grid[mazeY + y][mazeX + i * 10] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                    
+                    // Horizontal connectors at different heights
+                    const connectY = mazeY + (i % 2 === 0 ? 2 : wallHeight - 3);
+                    for (let x = 0; x < 8; x++) {
+                        if (mazeX + i * 10 + x < CONFIG.GRID_WIDTH && connectY < CONFIG.GRID_HEIGHT &&
+                            this.grid[connectY][mazeX + i * 10 + x] === TERRAIN.SAND) {
+                            // Leave gap in middle
+                            if (x < 3 || x > 5) {
+                                this.grid[connectY][mazeX + i * 10 + x] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                }
+                
+                // Add diagonal barriers for extra challenge
+                if (complexity > 1) {
+                    for (let i = 0; i < 5; i++) {
+                        const dx = mazeX + i * 3;
+                        const dy = mazeY + i * 2;
+                        if (dx < CONFIG.GRID_WIDTH && dy < CONFIG.GRID_HEIGHT && 
+                            this.grid[dy][dx] === TERRAIN.SAND) {
+                            this.grid[dy][dx] = TERRAIN.WALL;
+                        }
+                    }
+                }
+            }
+
+            setupEventListeners() {
+                // Mouse events
+                this.canvas.addEventListener('mousedown', (e) => {
+                    const rect = this.canvas.getBoundingClientRect();
+                    this.mouse.x = e.clientX - rect.left;
+                    this.mouse.y = e.clientY - rect.top;
+                    this.mouse.down = true;
+                    
+                    if (this.currentState === GAME_STATE.MENU) {
+                        this.handleMenuClick();
+                    } else if (this.currentState === GAME_STATE.PHASE2) {
+                        this.fireBullet();
+                    }
+                });
+
+                this.canvas.addEventListener('mousemove', (e) => {
+                    const rect = this.canvas.getBoundingClientRect();
+                    this.mouse.x = e.clientX - rect.left;
+                    this.mouse.y = e.clientY - rect.top;
+                    
+                    if (this.mouse.down && this.currentState === GAME_STATE.PHASE1) {
+                        this.digTerrain();
+                    }
+                });
+
+                this.canvas.addEventListener('mouseup', () => {
+                    this.mouse.down = false;
+                });
+
+                // Keyboard events
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+                
+                // Exit button
+                document.getElementById('exitButton').addEventListener('click', () => {
+                    if (confirm('Are you sure you want to exit the game?')) {
+                        this.gameOver();
+                    }
+                });
+            }
+            
+            handleMenuClick() {
+                const centerX = 400;
+                const centerY = 200;
+                
+                if (!this.showInstructions) {
+                    // Check play button
+                    if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
+                        this.mouse.y > centerY - 30 && this.mouse.y < centerY + 10) {
+                        this.startGame();
+                    }
+                    // Check instructions button
+                    else if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
+                             this.mouse.y > centerY + 40 && this.mouse.y < centerY + 80) {
+                        this.showInstructions = true;
+                    }
+                } else {
+                    // Back button from instructions
+                    if (this.mouse.x > centerX - 50 && this.mouse.x < centerX + 50 &&
+                        this.mouse.y > 340 && this.mouse.y < 380) {
+                        this.showInstructions = false;
+                    }
+                }
+            }
+
+            digTerrain() {
+                const centerX = this.mouse.x / CONFIG.CELL_SIZE;
+                const centerY = this.mouse.y / CONFIG.CELL_SIZE;
+                
+                // Circular digging with soft edges
+                for (let dy = -CONFIG.DIG_RADIUS - 1; dy <= CONFIG.DIG_RADIUS + 1; dy++) {
+                    for (let dx = -CONFIG.DIG_RADIUS - 1; dx <= CONFIG.DIG_RADIUS + 1; dx++) {
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        // Softer edge - random chance based on distance
+                        const digChance = distance <= CONFIG.DIG_RADIUS ? 1.0 : 
+                                        distance <= CONFIG.DIG_RADIUS + 0.5 ? 0.7 :
+                                        distance <= CONFIG.DIG_RADIUS + 1 ? 0.3 : 0;
+                        
+                        if (Math.random() < digChance) {
+                            const gridX = Math.floor(centerX + dx);
+                            const gridY = Math.floor(centerY + dy);
+                            
+                            if (gridX >= 0 && gridX < CONFIG.GRID_WIDTH && 
+                                gridY >= 0 && gridY < CONFIG.GRID_HEIGHT &&
+                                this.grid[gridY][gridX] === TERRAIN.SAND) {
+                                
+                                this.grid[gridY][gridX] = TERRAIN.SKY;
+                                
+                                // Create realistic dust particles - more variation
+                                const particleCount = 2 + Math.floor(Math.random() * 3);
+                                for (let i = 0; i < particleCount; i++) {
+                                    const angle = Math.random() * Math.PI * 2;
+                                    const speed = Math.random() * 2 + 1;
+                                    this.dustParticles.push({
+                                        x: gridX * CONFIG.CELL_SIZE + Math.random() * CONFIG.CELL_SIZE,
+                                        y: gridY * CONFIG.CELL_SIZE + Math.random() * CONFIG.CELL_SIZE,
+                                        vx: Math.cos(angle) * speed,
+                                        vy: Math.sin(angle) * speed - Math.random() * 2,
+                                        life: 15 + Math.random() * 25,
+                                        maxLife: 40,
+                                        size: 1 + Math.random() * 2,
+                                        color: Math.random() < 0.5 ? '#8B4513' : '#A0522D'
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            updatePhase1() {
+                // Guard against running this when not in phase 1
+                if (this.currentState !== GAME_STATE.PHASE1) {
+                    return;
+                }
+                
+                // Handle countdown timer
+                if (!this.phaseStarted) {
+                    this.countdownTimer -= 16;
+                    if (this.countdownTimer <= 0) {
+                        this.phaseStarted = true;
+                        this.waterFlowing = true;
+                    }
+                    return; // Don't update phase timer during countdown
+                }
+                
+                // Update phase timer
+                this.phaseTimer -= 16; // Assuming 60fps
+                
+                if (this.phaseTimer <= 0) {
+                    // Ensure we only transition once
+                    if (this.currentState === GAME_STATE.PHASE1) {
+                        this.transitionToPhase2();
+                    }
+                    return;
+                }
+
+                // Update dust particles
+                for (let i = this.dustParticles.length - 1; i >= 0; i--) {
+                    const dust = this.dustParticles[i];
+                    dust.x += dust.vx;
+                    dust.y += dust.vy;
+                    dust.vx *= 0.95;
+                    dust.vy *= 0.95;
+                    dust.life--;
+                    
+                    if (dust.life <= 0) {
+                        this.dustParticles.splice(i, 1);
+                    }
+                }
+
+                // Spawn water from tap
+                if (this.waterFlowing) {
+                    // Add water at dynamic tap location
+                    const tapX = this.tapX || CONFIG.TAP_X;
+                    const tapY = this.tapY || CONFIG.TAP_Y;
+                    
+                    for (let i = 0; i < CONFIG.TAP_WIDTH; i++) {
+                        const x = tapX - Math.floor(CONFIG.TAP_WIDTH/2) + i;
+                        if (x >= 0 && x < CONFIG.GRID_WIDTH && tapY < CONFIG.GRID_HEIGHT) {
+                            this.waterGrid[tapY][x] = Math.min(
+                                CONFIG.MAX_WATER_PER_CELL,
+                                this.waterGrid[tapY][x] + CONFIG.WATER_FLOW_RATE
+                            );
+                        }
+                    }
+                }
+
+                // Update water grid simulation
+                this.updateWaterSimulation();
+            }
+
+            updateWaterSimulation() {
+                // Create a copy of water grid for next frame
+                const newWaterGrid = [];
+                for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
+                    newWaterGrid[y] = [...this.waterGrid[y]];
+                }
+                
+                // Process water physics - multiple passes for better flow
+                for (let pass = 0; pass < 2; pass++) {
+                    // Process from bottom to top for better settling
+                    for (let y = CONFIG.GRID_HEIGHT - 1; y >= 0; y--) {
+                        for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
+                            const water = newWaterGrid[y][x];
+                            if (water <= CONFIG.MIN_WATER_FLOW) continue;
+                            
+                            const terrain = this.grid[y][x];
+                            
+                            // Check if water hits tank
+                            if (terrain === TERRAIN.TANK) {
+                                this.fuelLevel = Math.min(100, this.fuelLevel + water * 2); // Slower tank filling
+                                newWaterGrid[y][x] = 0;
+                                continue;
+                            }
+                            
+                            // Skip if cell is solid
+                            if (terrain === TERRAIN.SAND || terrain === TERRAIN.WALL) {
+                                newWaterGrid[y][x] = 0;
+                                continue;
+                            }
+                            
+                            // Try to flow down
+                            let flowed = false;
+                            if (y < CONFIG.GRID_HEIGHT - 1) {
+                                const below = this.grid[y + 1][x];
+                                if (below === TERRAIN.SKY || below === TERRAIN.TANK) {
+                                    const belowWater = newWaterGrid[y + 1][x];
+                                    const space = CONFIG.MAX_WATER_PER_CELL - belowWater;
+                                    if (space > 0) {
+                                        const flow = Math.min(water * 0.8, space);
+                                        newWaterGrid[y][x] -= flow;
+                                        newWaterGrid[y + 1][x] += flow;
+                                        flowed = true;
+                                    }
+                                }
+                            }
+                            
+                            // Horizontal flow - always try if water is present
+                            const remaining = newWaterGrid[y][x];
+                            if (remaining > 0.1) {
+                                // Check horizontal neighbors
+                                const canFlowLeft = x > 0 && (this.grid[y][x - 1] === TERRAIN.SKY || this.grid[y][x - 1] === TERRAIN.TANK);
+                                const canFlowRight = x < CONFIG.GRID_WIDTH - 1 && (this.grid[y][x + 1] === TERRAIN.SKY || this.grid[y][x + 1] === TERRAIN.TANK);
+                                
+                                // Also check if there's support below for horizontal flow
+                                const hasSupport = y >= CONFIG.GRID_HEIGHT - 1 || 
+                                    this.grid[y + 1][x] === TERRAIN.SAND || 
+                                    this.grid[y + 1][x] === TERRAIN.WALL ||
+                                    newWaterGrid[y + 1][x] > 0.8;
+                                
+                                if (hasSupport && (canFlowLeft || canFlowRight)) {
+                                    // Calculate pressure-based flow
+                                    const leftWater = canFlowLeft ? newWaterGrid[y][x - 1] : 1.0;
+                                    const rightWater = canFlowRight ? newWaterGrid[y][x + 1] : 1.0;
+                                    
+                                    // Flow to lower pressure areas
+                                    if (canFlowLeft && remaining > leftWater + 0.05) {
+                                        const diff = (remaining - leftWater) * 0.3;
+                                        newWaterGrid[y][x] -= diff;
+                                        newWaterGrid[y][x - 1] = Math.min(CONFIG.MAX_WATER_PER_CELL, newWaterGrid[y][x - 1] + diff);
+                                    }
+                                    
+                                    if (canFlowRight && remaining > rightWater + 0.05) {
+                                        const diff = (remaining - rightWater) * 0.3;
+                                        newWaterGrid[y][x] -= diff;
+                                        newWaterGrid[y][x + 1] = Math.min(CONFIG.MAX_WATER_PER_CELL, newWaterGrid[y][x + 1] + diff);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Update the water grid
+                this.waterGrid = newWaterGrid;
+            }
+            
+            transitionToPhase2() {
+                // Immediately switch to phase 2
+                this.currentState = GAME_STATE.PHASE2;
+                
+                // Clear all phase 1 data
+                this.waterGrid = [];
+                this.dustParticles = [];
+                this.waterFlowing = false;
+                
+                if (this.fuelLevel < 10) {
+                    // Insufficient fuel - game over
+                    this.gameOver();
+                    return;
+                }
+                
+                // Reset timer for boulder phase
+                this.boulderPhaseTimer = CONFIG.BOULDER_PHASE_TIME;
+                
+                // Immediately create boulders and start phase 2
+                this.createBoulders();
+                this.updateUI();
+                
+                // Debug: Log transition
+                console.log('Transitioned to Phase 2, Wave:', this.wave);
+            }
+
+            createBoulders() {
+                this.boulders = [];
+                
+                // Progressive difficulty with better pacing
+                let count, baseHP, sizeVariation;
+                
+                if (this.wave <= 3) {
+                    // Waves 1-3: Gentle introduction
+                    count = 1 + Math.floor(this.wave / 2); // 1-2 boulders
+                    baseHP = 2 + Math.floor(this.wave * 0.5);
+                    sizeVariation = 0;
+                } else if (this.wave <= 6) {
+                    // Waves 4-6: Moderate challenge
+                    count = 2 + Math.floor((this.wave - 3) * 0.7); // 2-4 boulders
+                    baseHP = 3 + this.wave - 3;
+                    sizeVariation = 5; // Some size variety
+                } else if (this.wave <= 10) {
+                    // Waves 7-10: Getting challenging
+                    count = 4 + Math.floor((this.wave - 6) * 0.5); // 4-6 boulders
+                    baseHP = 5 + this.wave - 6;
+                    sizeVariation = 10;
+                } else {
+                    // Waves 11+: Max challenge with creative variations
+                    count = Math.min(6 + Math.floor((this.wave - 10) * 0.3), 8); // Max 8 boulders
+                    baseHP = 8 + Math.floor((this.wave - 10) * 0.5);
+                    sizeVariation = 15;
+                }
+                
+                // Create boulders with variety
+                for (let i = 0; i < count; i++) {
+                    const sizeOffset = (Math.random() - 0.5) * sizeVariation;
+                    const radius = 25 + sizeOffset;
+                    const speed = this.wave > 5 ? 1 + (this.wave - 5) * 0.08 : 1; // Gradually faster
+                    
+                    // Special boulder types for later waves
+                    let boulderType = 'normal';
+                    if (this.wave > 8 && Math.random() < 0.3) {
+                        boulderType = Math.random() < 0.5 ? 'armored' : 'fast';
+                    }
+                    
+                    this.boulders.push({
+                        x: 100 + (i % 5) * 140 + Math.random() * 60,
+                        y: 30 + Math.floor(i / 5) * 100 + Math.random() * 40,
+                        vx: (Math.random() - 0.5) * 3 * speed,
+                        vy: Math.random() * 2,
+                        radius: radius,
+                        hp: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
+                        maxHP: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
+                        size: radius > 30 ? 3 : (radius > 20 ? 2 : 1),
+                        type: boulderType,
+                        speedMultiplier: boulderType === 'fast' ? 1.5 : 1
+                    });
+                }
+            }
+
+            updatePhase2() {
+                // Guard against running this when not in phase 2
+                if (this.currentState !== GAME_STATE.PHASE2) {
+                    return;
+                }
+                
+                // Update boulder phase timer
+                this.boulderPhaseTimer -= 16; // Assuming 60fps
+                
+                if (this.boulderPhaseTimer <= 0) {
+                    // Time's up! Game over
+                    this.gameOver();
+                    return;
+                }
+                
+                // Update gun movement (horizontal only)
+                if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
+                    this.gun.x = Math.max(20, this.gun.x - CONFIG.GUN_SPEED);
+                }
+                if (this.keys['ArrowRight'] || this.keys['KeyD']) {
+                    this.gun.x = Math.min(760, this.gun.x + CONFIG.GUN_SPEED);
+                }
+
+                // Auto-fire system (unlimited ammo in boulder phase)
+                const now = Date.now();
+                if (now - this.lastAutoFire >= CONFIG.AUTO_FIRE_RATE) {
+                    this.fireBullet();
+                    this.lastAutoFire = now;
+                }
+
+                // Update visual effects
+                this.muzzleFlash = Math.max(0, this.muzzleFlash - 2);
+                this.cameraShake.intensity *= 0.9;
+                this.cameraShake.x = (Math.random() - 0.5) * this.cameraShake.intensity;
+                this.cameraShake.y = (Math.random() - 0.5) * this.cameraShake.intensity;
+
+                // Update impact particles
+                for (let i = this.impactParticles.length - 1; i >= 0; i--) {
+                    const particle = this.impactParticles[i];
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.vy += 0.2; // gravity
+                    particle.life--;
+                    
+                    if (particle.life <= 0) {
+                        this.impactParticles.splice(i, 1);
+                    }
+                }
+
+                // Update bullets
+                for (let i = this.bullets.length - 1; i >= 0; i--) {
+                    const bullet = this.bullets[i];
+                    bullet.y -= CONFIG.BULLET_SPEED;
+                    
+                    if (bullet.y < 0) {
+                        this.bullets.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // Check boulder collisions - iterate backwards to handle removal
+                    let bulletHit = false;
+                    for (let j = this.boulders.length - 1; j >= 0; j--) {
+                        const boulder = this.boulders[j];
+                        if (!boulder || boulder.destroyed) continue; // Skip if boulder was removed or destroyed
+                        
+                        const dx = bullet.x - boulder.x;
+                        const dy = bullet.y - boulder.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < boulder.radius) {
+                            this.bullets.splice(i, 1);
+                            this.hitBoulder(j);
+                            bulletHit = true;
+                            break;
+                        }
+                    }
+                    if (bulletHit) continue;
+                }
+
+                // Update boulders with improved physics - iterate backwards for safety
+                for (let i = this.boulders.length - 1; i >= 0; i--) {
+                    const boulder = this.boulders[i];
+                    if (!boulder || boulder.destroyed) continue; // Skip if boulder was removed or destroyed
+                    
+                    const speedMult = boulder.speedMultiplier || 1;
+                    boulder.x += boulder.vx * speedMult;
+                    boulder.y += boulder.vy * speedMult;
+                    
+                    // Boulder-to-boulder collision
+                    for (let j = 0; j < i; j++) {
+                        const other = this.boulders[j];
+                        if (!other || other.destroyed) continue; // Skip if boulder was removed or destroyed
+                        const dx = other.x - boulder.x;
+                        const dy = other.y - boulder.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const minDistance = boulder.radius + other.radius;
+                        
+                        if (distance < minDistance && distance > 0) {
+                            // Separate boulders
+                            const overlap = minDistance - distance;
+                            const separateX = (dx / distance) * overlap * 0.5;
+                            const separateY = (dy / distance) * overlap * 0.5;
+                            
+                            boulder.x -= separateX;
+                            boulder.y -= separateY;
+                            other.x += separateX;
+                            other.y += separateY;
+                            
+                            // Exchange velocities with energy conservation
+                            const normalX = dx / distance;
+                            const normalY = dy / distance;
+                            const relativeVelX = other.vx - boulder.vx;
+                            const relativeVelY = other.vy - boulder.vy;
+                            const speed = relativeVelX * normalX + relativeVelY * normalY;
+                            
+                            if (speed < 0) continue; // Objects separating
+                            
+                            boulder.vx += speed * normalX * 0.8;
+                            boulder.vy += speed * normalY * 0.8;
+                            other.vx -= speed * normalX * 0.8;
+                            other.vy -= speed * normalY * 0.8;
+                        }
+                    }
+                    
+                    // Bounce off walls with variation and much higher energy
+                    if (boulder.x <= boulder.radius || boulder.x >= 800 - boulder.radius) {
+                        boulder.vx *= -(0.98 + Math.random() * 0.04); // Much higher energy conservation
+                        boulder.vx += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION;
+                        boulder.x = Math.max(boulder.radius, Math.min(800 - boulder.radius, boulder.x));
+                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                    }
+                    
+                    if (boulder.y <= boulder.radius) {
+                        boulder.vy *= -(0.98 + Math.random() * 0.04); // Much higher energy conservation
+                        boulder.vy += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION;
+                        boulder.y = boulder.radius;
+                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                    }
+                    
+                    // Gravity
+                    boulder.vy += 0.25;
+                    
+                    // Check gun collision (immediate game over)
+                    if (boulder.y + boulder.radius >= this.gun.y &&
+                        boulder.x + boulder.radius >= this.gun.x && 
+                        boulder.x - boulder.radius <= this.gun.x + this.gun.width) {
+                        this.gameOver();
+                        return;
+                    }
+                    
+                    // Bounce off bottom with minimum height preservation and much higher energy
+                    if (boulder.y >= 400 - boulder.radius) {
+                        boulder.y = 400 - boulder.radius;
+                        const bounceVel = Math.abs(boulder.vy * 0.96); // Much higher energy conservation
+                        boulder.vy = -Math.max(bounceVel, CONFIG.MIN_BOUNCE_HEIGHT);
+                        boulder.vy += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION;
+                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                    }
+                }
+                
+                // Process destroyed boulders and pending splits
+                this.processDestroyedBoulders();
+
+                // Check if all boulders destroyed - with safety check
+                if (this.boulders.length === 0 && this.currentState === GAME_STATE.PHASE2) {
+                    // Prevent multiple calls
+                    if (!this.transitioning) {
+                        this.transitioning = true;
+                        // Small delay to prevent any race conditions
+                        setTimeout(() => {
+                            if (this.boulders.length === 0 && this.currentState === GAME_STATE.PHASE2) {
+                                this.nextWave();
+                            }
+                            this.transitioning = false;
+                        }, 100);
+                    }
+                }
+            }
+            
+            processDestroyedBoulders() {
+                // Remove destroyed boulders
+                this.boulders = this.boulders.filter(boulder => !boulder.destroyed);
+                
+                // Add split boulders
+                if (this.pendingSplits && this.pendingSplits.length > 0) {
+                    this.boulders.push(...this.pendingSplits);
+                    this.pendingSplits = [];
+                }
+            }
+
+            hitBoulder(boulderIndex) {
+                // Safety check - ensure boulder exists
+                if (boulderIndex < 0 || boulderIndex >= this.boulders.length) {
+                    return;
+                }
+                
+                const boulder = this.boulders[boulderIndex];
+                if (!boulder) return; // Additional safety check
+                
+                boulder.hp--;
+                
+                // Impact effects
+                this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY * 0.5;
+                
+                // Impact particles
+                for (let i = 0; i < CONFIG.PARTICLE_COUNT; i++) {
+                    this.impactParticles.push({
+                        x: boulder.x + (Math.random() - 0.5) * boulder.radius,
+                        y: boulder.y + (Math.random() - 0.5) * boulder.radius,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        life: 20 + Math.random() * 10,
+                        maxLife: 30
+                    });
+                }
+                
+                if (boulder.hp <= 0) {
+                    this.score += (boulder.size || 1) * 100;
+                    
+                    // Destruction effects
+                    this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                    
+                    // More destruction particles
+                    for (let i = 0; i < CONFIG.PARTICLE_COUNT * 2; i++) {
+                        this.impactParticles.push({
+                            x: boulder.x + (Math.random() - 0.5) * boulder.radius * 2,
+                            y: boulder.y + (Math.random() - 0.5) * boulder.radius * 2,
+                            vx: (Math.random() - 0.5) * 12,
+                            vy: (Math.random() - 0.5) * 12,
+                            life: 30 + Math.random() * 20,
+                            maxLife: 50
+                        });
+                    }
+                    
+                    // Mark boulder as destroyed instead of removing immediately
+                    boulder.destroyed = true;
+                    
+                    if (boulder.size > 1) {
+                        // Store split boulder data for later creation
+                        if (!this.pendingSplits) this.pendingSplits = [];
+                        
+                        const newSize = boulder.size - 1;
+                        const newRadius = boulder.radius * 0.7;
+                        
+                        for (let i = 0; i < 2; i++) {
+                            this.pendingSplits.push({
+                                x: boulder.x + (i - 0.5) * 25,
+                                y: boulder.y,
+                                vx: (i - 0.5) * (4 + Math.random() * 4),
+                                vy: -2 - Math.random() * 3,
+                                hp: Math.ceil(boulder.maxHP * 0.6),
+                                maxHP: Math.ceil(boulder.maxHP * 0.6),
+                                size: newSize,
+                                radius: newRadius,
+                                type: boulder.type || 'normal',
+                                speedMultiplier: boulder.speedMultiplier || 1
+                            });
+                        }
+                    }
+                }
+            }
+
+            fireBullet() {
+                // In phase 2, unlimited ammo
+                this.bullets.push({
+                    x: this.gun.x + this.gun.width / 2,
+                    y: this.gun.y
+                });
+                
+                // Muzzle flash and recoil effects
+                this.muzzleFlash = 10;
+                this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY * 0.3;
+            }
+
+            nextWave() {
+                this.wave++;
+                this.currentState = GAME_STATE.PHASE1;
+                this.phaseTimer = CONFIG.AMMO_PHASE_TIME;
+                this.fuelLevel = 0;
+                this.waterFlowing = false;
+                this.phaseStarted = false;
+                this.countdownTimer = 3000;
+                this.transitioning = false; // Reset transitioning flag
+                
+                // Clear all phase 2 data
+                this.bullets = [];
+                this.boulders = [];
+                this.impactParticles = [];
+                this.pendingSplits = []; // Clear any pending boulder splits
+                
+                // Cycle background
+                this.backgroundIndex = (this.backgroundIndex + 1) % this.backgrounds.length;
+                
+                // Generate more complex layouts for higher waves
+                this.initializeGrid();
+                this.addWaveComplexity();
+                this.updateUI();
+                
+                // Debug: Log wave transition
+                console.log('Started Wave:', this.wave, 'Phase 1');
+            }
+
+            gameOver() {
+                alert(`Game Over! Wave: ${this.wave}, Score: ${this.score}`);
+                
+                // Save high score
+                const highScore = parseInt(localStorage.getItem('highScore') || '0');
+                if (this.score > highScore) {
+                    localStorage.setItem('highScore', this.score.toString());
+                }
+                
+                // Return to menu
+                this.currentState = GAME_STATE.MENU;
+                this.showInstructions = false;
+                // Clear all game data
+                this.bullets = [];
+                this.boulders = [];
+                this.waterGrid = [];
+                this.dustParticles = [];
+                this.impactParticles = [];
+                this.pendingSplits = [];
+                this.transitioning = false;
+            }
+
+            updateUI() {
+                // Hide/show UI based on game state
+                const gameUI = document.querySelector('.ui');
+                const exitButton = document.getElementById('exitButton');
+                
+                if (this.currentState === GAME_STATE.MENU) {
+                    if (gameUI) gameUI.style.display = 'none';
+                    if (exitButton) exitButton.style.display = 'none';
+                } else {
+                    if (gameUI) gameUI.style.display = 'block';
+                    if (exitButton) exitButton.style.display = 'block';
+                    
+                    document.getElementById('waveCount').textContent = this.wave;
+                    document.getElementById('score').textContent = this.score;
+                    
+                    // Update tank fill visualization
+                    const tankFill = document.getElementById('tankFill');
+                    if (tankFill) {
+                        tankFill.style.width = (this.fuelLevel) + '%';
+                    }
+                    
+                    const phaseIndicator = document.getElementById('phaseIndicator');
+                    const timerFill = document.getElementById('timerFill');
+                    
+                    if (this.currentState === GAME_STATE.PHASE1) {
+                        phaseIndicator.textContent = 'PHASE 1: COLLECT FUEL';
+                        const timerPercent = (this.phaseTimer / CONFIG.AMMO_PHASE_TIME) * 100;
+                        timerFill.style.width = timerPercent + '%';
+                        document.getElementById('ammoCount').textContent = Math.floor(this.fuelLevel) + '%';
+                    } else {
+                        phaseIndicator.textContent = 'PHASE 2: DESTROY BOULDERS';
+                        const timerPercent = (this.boulderPhaseTimer / CONFIG.BOULDER_PHASE_TIME) * 100;
+                        timerFill.style.width = timerPercent + '%';
+                        document.getElementById('ammoCount').textContent = 'UNLIMITED';
+                    }
+                }
+            }
+
+            render() {
+                // Apply camera shake
+                this.ctx.save();
+                this.ctx.translate(this.cameraShake.x, this.cameraShake.y);
+                
+                // Clear canvas with dynamic background
+                this.ctx.fillStyle = this.currentState === GAME_STATE.MENU ? '#87CEEB' : this.backgrounds[this.backgroundIndex];
+                this.ctx.fillRect(-10, -10, 820, 420);
+
+                if (this.currentState === GAME_STATE.MENU) {
+                    this.renderMenu();
+                } else if (this.currentState === GAME_STATE.PHASE1) {
+                    this.renderPhase1();
+                } else if (this.currentState === GAME_STATE.PHASE2) {
+                    this.renderPhase2();
+                }
+                
+                this.ctx.restore();
+            }
+            
+            renderMenu() {
+                const centerX = 400;
+                const centerY = 200;
+                
+                if (!this.showInstructions) {
+                    // Title
+                    this.ctx.font = 'bold 72px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    
+                    // Title shadow
+                    this.ctx.fillStyle = '#000000';
+                    this.ctx.fillText('PIPELINE PANIC', centerX + 4, 80 + 4);
+                    
+                    // Title main
+                    const titleGradient = this.ctx.createLinearGradient(0, 40, 0, 120);
+                    titleGradient.addColorStop(0, '#FF6B6B');
+                    titleGradient.addColorStop(1, '#C44444');
+                    this.ctx.fillStyle = titleGradient;
+                    this.ctx.fillText('PIPELINE PANIC', centerX, 80);
+                    
+                    // Play button
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(centerX - 100, centerY - 30, 200, 40);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(centerX - 100, centerY - 30, 200, 40);
+                    
+                    this.ctx.font = 'bold 28px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('PLAY', centerX, centerY - 10);
+                    
+                    // Instructions button
+                    this.ctx.fillStyle = '#2196F3';
+                    this.ctx.fillRect(centerX - 100, centerY + 40, 200, 40);
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(centerX - 100, centerY + 40, 200, 40);
+                    
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('INSTRUCTIONS', centerX, centerY + 60);
+                    
+                    // High score display
+                    this.ctx.font = '20px Arial';
+                    this.ctx.fillStyle = '#333333';
+                    this.ctx.fillText('High Score: ' + (localStorage.getItem('highScore') || 0), centerX, centerY + 120);
+                } else {
+                    // Instructions screen
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.fillRect(50, 50, 700, 300);
+                    
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('HOW TO PLAY', centerX, 90);
+                    
+                    this.ctx.font = '18px Arial';
+                    this.ctx.textAlign = 'left';
+                    const instructions = [
+                        'PHASE 1 - FUEL COLLECTION:',
+                        '• Click and drag to dig tunnels through the dirt',
+                        '• Water flows automatically after 3-2-1 countdown',
+                        '• Guide water to the tank at bottom left',
+                        '• Collect ANY fuel before time runs out!',
+                        '',
+                        'PHASE 2 - BOULDER DESTRUCTION:',
+                        '• Use A/D or ←/→ keys to move your gun',
+                        '• Auto-fire shoots at bouncing boulders',
+                        '• Destroy all boulders within 1 minute',
+                        '• Game gets harder each wave!'
+                    ];
+                    
+                    let y = 130;
+                    for (const line of instructions) {
+                        this.ctx.fillText(line, 80, y);
+                        y += 22;
+                    }
+                    
+                    // Back button
+                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillRect(centerX - 50, 340, 100, 40);
+                    this.ctx.strokeStyle = '#D84315';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 50, 340, 100, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('BACK', centerX, 360);
+                }
+            }
+
+            renderPhase1() {
+                // Render grid
+                for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
+                    for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
+                        const terrain = this.grid[y][x];
+                        const px = x * CONFIG.CELL_SIZE;
+                        const py = y * CONFIG.CELL_SIZE;
+                        
+                        switch (terrain) {
+                            case TERRAIN.SKY:
+                                // Already sky blue background
+                                break;
+                            case TERRAIN.SAND:
+                                // Varied sand colors for texture
+                                const sandVariation = (x * 7 + y * 13) % 5;
+                                const sandColors = ['#C19A6B', '#B8860B', '#D2691E', '#CD853F', '#DEB887'];
+                                this.ctx.fillStyle = sandColors[sandVariation];
+                                this.ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+                                
+                                // Occasional sand grain highlights
+                                if (Math.random() < 0.02) {
+                                    this.ctx.fillStyle = 'rgba(255, 228, 196, 0.6)';
+                                    this.ctx.fillRect(px + 1, py + 1, 2, 2);
+                                }
+                                break;
+                            case TERRAIN.WALL:
+                                // Rock texture gradient
+                                const wallGradient = this.ctx.createLinearGradient(px, py, px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
+                                wallGradient.addColorStop(0, '#8B7D6B');
+                                wallGradient.addColorStop(0.5, '#6B5D4F');
+                                wallGradient.addColorStop(1, '#4A3C28');
+                                this.ctx.fillStyle = wallGradient;
+                                this.ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+                                
+                                // Rock edges
+                                this.ctx.strokeStyle = '#3A2F20';
+                                this.ctx.lineWidth = 0.5;
+                                this.ctx.strokeRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+                                break;
+                            case TERRAIN.TANK:
+                                // Don't render individual tank cells, we'll draw the whole tank
+                                break;
+                        }
+                    }
+                }
+                
+                // Render tank as a single unit with better visuals
+                const tankX = (this.tankX || 0) * CONFIG.CELL_SIZE;
+                const tankY = (this.tankY || 60) * CONFIG.CELL_SIZE;
+                const tankWidth = 32 * CONFIG.CELL_SIZE;
+                const tankHeight = 20 * CONFIG.CELL_SIZE;
+                
+                // Tank body gradient
+                const tankGradient = this.ctx.createLinearGradient(tankX, tankY, tankX, tankY + tankHeight);
+                tankGradient.addColorStop(0, '#707070');
+                tankGradient.addColorStop(0.5, '#909090');
+                tankGradient.addColorStop(1, '#505050');
+                
+                // Draw tank body
+                this.ctx.fillStyle = tankGradient;
+                this.ctx.fillRect(tankX, tankY, tankWidth, tankHeight);
+                
+                // Tank rim
+                this.ctx.strokeStyle = '#303030';
+                this.ctx.lineWidth = 3;
+                this.ctx.strokeRect(tankX, tankY, tankWidth, tankHeight);
+                
+                // Inner rim highlight
+                this.ctx.strokeStyle = '#B0B0B0';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(tankX + 4, tankY + 4, tankWidth - 8, tankHeight - 8);
+                
+                // Tank markings
+                this.ctx.fillStyle = '#404040';
+                this.ctx.fillRect(tankX, tankY + tankHeight - 10, tankWidth, 10);
+                
+                // Rivets
+                this.ctx.fillStyle = '#606060';
+                for (let i = 10; i < tankWidth - 10; i += 20) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(tankX + i, tankY + 8, 2, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Render tank fill level (gradual filling)
+                if (this.fuelLevel > 0) {
+                    const fillHeight = tankHeight * (this.fuelLevel / 100);
+                    const fillY = tankY + (tankHeight - fillHeight);
+                    
+                    // Water gradient matching the flowing water
+                    const waterGradient = this.ctx.createLinearGradient(tankX, fillY, tankX, tankY + tankHeight);
+                    waterGradient.addColorStop(0, 'rgba(64, 164, 223, 0.9)');
+                    waterGradient.addColorStop(0.3, 'rgba(41, 128, 185, 0.95)');
+                    waterGradient.addColorStop(1, 'rgba(21, 101, 192, 1)');
+                    
+                    this.ctx.fillStyle = waterGradient;
+                    this.ctx.fillRect(tankX + 4, fillY, tankWidth - 8, fillHeight - 4);
+                    
+                    // Surface effects
+                    if (this.fuelLevel > 5) {
+                        // Animated water surface
+                        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.beginPath();
+                        
+                        for (let x = 0; x < tankWidth - 8; x += 2) {
+                            const waveY = Math.sin(Date.now() * 0.002 + x * 0.05) * 3;
+                            if (x === 0) {
+                                this.ctx.moveTo(tankX + 4 + x, fillY + waveY);
+                            } else {
+                                this.ctx.lineTo(tankX + 4 + x, fillY + waveY);
+                            }
+                        }
+                        this.ctx.stroke();
+                        
+                        // Surface highlights
+                        for (let x = 0; x < tankWidth - 8; x += 15) {
+                            if (Math.sin(Date.now() * 0.001 + x * 0.2) > 0.5) {
+                                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                                this.ctx.fillRect(tankX + 4 + x, fillY + 1, 10, 2);
+                            }
+                        }
+                    }
+                }
+                
+                // Render dust particles with variation
+                for (const dust of this.dustParticles) {
+                    const alpha = dust.life / dust.maxLife;
+                    this.ctx.fillStyle = dust.color ? `${dust.color}${Math.floor(alpha * 255).toString(16).padStart(2, '0')}` : `rgba(139, 69, 19, ${alpha * 0.8})`;
+                    this.ctx.beginPath();
+                    const size = dust.size || 2;
+                    this.ctx.arc(dust.x, dust.y, size * alpha, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Render countdown timer if not started
+                if (!this.phaseStarted) {
+                    this.ctx.save();
+                    this.ctx.font = 'bold 72px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    
+                    const seconds = Math.ceil(this.countdownTimer / 1000);
+                    if (seconds > 0) {
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                        this.ctx.fillRect(0, 0, 800, 400);
+                        
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        const text = seconds.toString();
+                        this.ctx.strokeText(text, 400, 200);
+                        this.ctx.fillText(text, 400, 200);
+                    } else {
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                        this.ctx.fillRect(0, 0, 800, 400);
+                        
+                        this.ctx.fillStyle = '#00FF00';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        this.ctx.strokeText('GO!', 400, 200);
+                        this.ctx.fillText('GO!', 400, 200);
+                    }
+                    this.ctx.restore();
+                }
+                
+                // Render tap/pipe at top
+                if (this.phaseStarted || this.countdownTimer <= 500) {
+                    const tapX = (this.tapX || CONFIG.TAP_X) * CONFIG.CELL_SIZE;
+                    const tapY = (this.tapY || CONFIG.TAP_Y) * CONFIG.CELL_SIZE;
+                    const tapWidth = CONFIG.TAP_WIDTH * CONFIG.CELL_SIZE;
+                    
+                    // Draw pipe base
+                    this.ctx.fillStyle = '#333333';
+                    this.ctx.fillRect(tapX - tapWidth/2 - 2, tapY - 20, tapWidth + 4, 15);
+                    
+                    // Draw pipe
+                    const pipeGradient = this.ctx.createLinearGradient(tapX - tapWidth/2, tapY - 15, tapX + tapWidth/2, tapY - 15);
+                    pipeGradient.addColorStop(0, '#555555');
+                    pipeGradient.addColorStop(0.5, '#777777');
+                    pipeGradient.addColorStop(1, '#555555');
+                    this.ctx.fillStyle = pipeGradient;
+                    this.ctx.fillRect(tapX - tapWidth/2, tapY - 15, tapWidth, 20);
+                    
+                    // Draw tap end
+                    this.ctx.fillStyle = '#666666';
+                    this.ctx.fillRect(tapX - tapWidth/2 - 5, tapY + 5, tapWidth + 10, 12);
+                    
+                    // Draw highlights
+                    this.ctx.fillStyle = '#999999';
+                    this.ctx.fillRect(tapX - tapWidth/2, tapY - 15, tapWidth, 3);
+                    this.ctx.fillStyle = '#888888';
+                    this.ctx.fillRect(tapX - tapWidth/2 - 5, tapY + 5, tapWidth + 10, 2);
+                }
+                
+                // Render water from grid
+                for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
+                    for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
+                        const water = this.waterGrid[y][x];
+                        if (water > CONFIG.MIN_WATER_FLOW) {
+                            const px = x * CONFIG.CELL_SIZE;
+                            const py = y * CONFIG.CELL_SIZE;
+                            
+                            // Calculate water height based on amount
+                            const height = CONFIG.CELL_SIZE * water;
+                            const topY = py + CONFIG.CELL_SIZE - height;
+                            
+                            // Create gradient for water depth
+                            const gradient = this.ctx.createLinearGradient(px, topY, px, py + CONFIG.CELL_SIZE);
+                            gradient.addColorStop(0, 'rgba(64, 164, 223, 0.85)');
+                            gradient.addColorStop(0.3, 'rgba(41, 128, 185, 0.9)');
+                            gradient.addColorStop(1, 'rgba(21, 101, 192, 0.95)');
+                            
+                            this.ctx.fillStyle = gradient;
+                            this.ctx.fillRect(px, topY, CONFIG.CELL_SIZE, height);
+                            
+                            // Add surface highlights and reflections
+                            if (water > 0.7 && y > 0 && this.waterGrid[y-1][x] < 0.1) {
+                                // Main highlight
+                                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                                this.ctx.fillRect(px, topY, CONFIG.CELL_SIZE, 2);
+                                
+                                // Shimmer effect
+                                if (Math.sin(Date.now() * 0.001 + x * 0.5) > 0.5) {
+                                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                                    this.ctx.fillRect(px + 1, topY + 1, CONFIG.CELL_SIZE - 2, 1);
+                                }
+                            }
+                            
+                            // Bubble effects for deep water
+                            if (water > 0.9 && Math.random() < 0.001) {
+                                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                                this.ctx.beginPath();
+                                this.ctx.arc(px + CONFIG.CELL_SIZE/2, py - 2, 1, 0, Math.PI * 2);
+                                this.ctx.fill();
+                            }
+                        }
+                    }
+                }
+            }
+
+            renderPhase2() {
+                // Render impact particles
+                for (const particle of this.impactParticles) {
+                    const alpha = particle.life / particle.maxLife;
+                    this.ctx.fillStyle = `rgba(255, 165, 0, ${alpha})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(particle.x, particle.y, 3 * alpha, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+                
+                // Render enhanced gun
+                // Gun barrel gradient
+                const gunGradient = this.ctx.createLinearGradient(this.gun.x, this.gun.y, this.gun.x, this.gun.y + this.gun.height);
+                gunGradient.addColorStop(0, '#5C7CFA');
+                gunGradient.addColorStop(0.3, '#4169E1');
+                gunGradient.addColorStop(0.7, '#364FC7');
+                gunGradient.addColorStop(1, '#2C3E96');
+                
+                // Gun body
+                this.ctx.fillStyle = gunGradient;
+                this.ctx.fillRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
+                
+                // Gun details
+                this.ctx.fillStyle = '#1E2A78';
+                this.ctx.fillRect(this.gun.x + 5, this.gun.y + 5, this.gun.width - 10, 3);
+                this.ctx.fillRect(this.gun.x + this.gun.width/2 - 2, this.gun.y - 4, 4, 4);
+                
+                // Gun outline
+                this.ctx.strokeStyle = '#1A237E';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
+                
+                // Muzzle flash effect
+                if (this.muzzleFlash > 0) {
+                    this.ctx.fillStyle = `rgba(255, 255, 0, ${this.muzzleFlash / 10})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.gun.x + this.gun.width / 2, this.gun.y, 
+                               this.muzzleFlash * 2, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+                
+                // Render bullets with trails
+                this.ctx.fillStyle = '#FFD700';
+                for (const bullet of this.bullets) {
+                    // Bullet trail
+                    this.ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+                    this.ctx.fillRect(bullet.x - 1, bullet.y, 2, 10);
+                    
+                    // Bullet
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.beginPath();
+                    this.ctx.arc(bullet.x, bullet.y, 4, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+                
+                // Render boulders with enhanced visuals
+                for (const boulder of this.boulders) {
+                    // Boulder shadow
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                    this.ctx.beginPath();
+                    this.ctx.ellipse(boulder.x + 3, 400 - 5, boulder.radius * 0.8, boulder.radius * 0.3, 0, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // Boulder body with gradient effect based on type
+                    const gradient = this.ctx.createRadialGradient(
+                        boulder.x - boulder.radius * 0.3, boulder.y - boulder.radius * 0.3, 0,
+                        boulder.x, boulder.y, boulder.radius
+                    );
+                    
+                    if (boulder.type === 'armored') {
+                        // Metallic armored boulder
+                        gradient.addColorStop(0, '#C0C0C0');
+                        gradient.addColorStop(0.5, '#808080');
+                        gradient.addColorStop(1, '#404040');
+                    } else if (boulder.type === 'fast') {
+                        // Red-tinted fast boulder
+                        gradient.addColorStop(0, '#FF9999');
+                        gradient.addColorStop(0.5, '#CC6666');
+                        gradient.addColorStop(1, '#993333');
+                    } else {
+                        // Normal boulder
+                        gradient.addColorStop(0, '#B8A595');
+                        gradient.addColorStop(0.5, '#8B7355');
+                        gradient.addColorStop(1, '#5D4E37');
+                    }
+                    
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.beginPath();
+                    this.ctx.arc(boulder.x, boulder.y, boulder.radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // Boulder texture/details
+                    if (boulder.type === 'armored') {
+                        // Metal plates
+                        this.ctx.strokeStyle = '#606060';
+                        this.ctx.lineWidth = 2;
+                        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 3) {
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(boulder.x, boulder.y);
+                            this.ctx.lineTo(
+                                boulder.x + Math.cos(angle) * boulder.radius * 0.8,
+                                boulder.y + Math.sin(angle) * boulder.radius * 0.8
+                            );
+                            this.ctx.stroke();
+                        }
+                    } else if (boulder.type === 'fast') {
+                        // Speed lines
+                        this.ctx.strokeStyle = 'rgba(255, 200, 0, 0.6)';
+                        this.ctx.lineWidth = 2;
+                        for (let i = 0; i < 3; i++) {
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(boulder.x - boulder.radius - 10, boulder.y - 10 + i * 10);
+                            this.ctx.lineTo(boulder.x - boulder.radius + 5, boulder.y - 10 + i * 10);
+                            this.ctx.stroke();
+                        }
+                    }
+                    
+                    // Boulder outline
+                    this.ctx.strokeStyle = boulder.type === 'armored' ? '#303030' : 
+                                          boulder.type === 'fast' ? '#CC3333' : '#2F4F4F';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.beginPath();
+                    this.ctx.arc(boulder.x, boulder.y, boulder.radius, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                    
+                    // HP display with background
+                    const hpRatio = boulder.hp / boulder.maxHP;
+                    const hpColor = hpRatio > 0.6 ? '#00FF00' : hpRatio > 0.3 ? '#FFFF00' : '#FF0000';
+                    
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    this.ctx.fillRect(boulder.x - 20, boulder.y - boulder.radius - 25, 40, 20);
+                    
+                    // HP bar
+                    this.ctx.fillStyle = '#333333';
+                    this.ctx.fillRect(boulder.x - 18, boulder.y - boulder.radius - 23, 36, 6);
+                    this.ctx.fillStyle = hpColor;
+                    this.ctx.fillRect(boulder.x - 18, boulder.y - boulder.radius - 23, 36 * hpRatio, 6);
+                    
+                    // HP text
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.font = 'bold 12px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText(boulder.hp, boulder.x, boulder.y - boulder.radius - 10);
+                }
+            }
+
+            gameLoop() {
+                // Update game logic
+                if (this.currentState === GAME_STATE.PHASE1) {
+                    this.updatePhase1();
+                } else if (this.currentState === GAME_STATE.PHASE2) {
+                    this.updatePhase2();
+                }
+                
+                // Update UI
+                this.updateUI();
+                
+                // Render
+                this.render();
+                
+                // Continue loop
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+
+        // Start the game when page loads
+        window.addEventListener('load', () => {
+            new PipelinePanicGame();
+        });
+    </script>
+</body>
+</html>
