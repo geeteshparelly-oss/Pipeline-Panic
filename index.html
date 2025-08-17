@@ -253,9 +253,8 @@
                 this.showPauseMenu = false;
                 this.showPauseInstructions = false;
                 
-                // Load saved customization
-                this.selectedSkin = localStorage.getItem('pipelinePanicSkin') || 'default';
-                this.selectedFuelColor = localStorage.getItem('pipelinePanicFuelColor') || 'blue';
+                // Load saved customization (removed duplicate initialization)
+                // this.selectedSkin and this.selectedFuelColor will be set later
                 
                 // Phase 1 variables
                 this.grid = [];
@@ -306,21 +305,44 @@
                 this.boulderPhaseStartCountdown = 0;
                 
                 // Customization
-                this.selectedSkin = 'default';
-                this.selectedFuelColor = 'blue';
+                this.selectedSkin = localStorage.getItem('pipelinePanicSkin') || 'default';
+                this.selectedFuelColor = localStorage.getItem('pipelinePanicFuelColor') || 'blue';
+                this.customFuelColor = localStorage.getItem('pipelinePanicCustomFuelColor') || '#00BFFF';
+                this.showFuelColorPicker = false;
+                this.colorPickerHue = 200; // Initial hue for color picker
+                this.colorPickerSaturation = 100;
+                this.colorPickerLightness = 50;
+                this.showShooterCustomization = false;
+                this.shooterCustomMode = 'presets'; // 'presets' or 'custom'
+                this.customShooterColors = {
+                    body: localStorage.getItem('customShooterBody') || '#4169E1',
+                    barrel: localStorage.getItem('customShooterBarrel') || '#2E5090',
+                    detail: localStorage.getItem('customShooterDetail') || '#1E3A5F'
+                };
+                // Slider values for shooter colors (HSL)
+                this.shooterColorSliders = {
+                    body: { h: 220, s: 60, l: 50 },
+                    barrel: { h: 220, s: 50, l: 35 },
+                    detail: { h: 220, s: 50, l: 25 }
+                };
+                this.activeShooterColorPicker = null; // 'body', 'barrel', or 'detail'
+                this.customShooterShape = localStorage.getItem('customShooterShape') || 'rectangle';
+                this.shooterShapes = ['rectangle', 'rounded', 'hexagon', 'triangle', 'diamond'];
                 this.skins = {
                     default: { name: 'Classic', color: '#4169E1', gradient: ['#5C7CFA', '#4169E1', '#364FC7'] },
                     red: { name: 'Crimson', color: '#DC143C', gradient: ['#FF6B6B', '#DC143C', '#B91C1C'] },
                     green: { name: 'Forest', color: '#228B22', gradient: ['#4ADE80', '#228B22', '#166534'] },
                     purple: { name: 'Royal', color: '#9370DB', gradient: ['#C084FC', '#9370DB', '#7C3AED'] },
-                    gold: { name: 'Golden', color: '#FFD700', gradient: ['#FDE047', '#FFD700', '#EAB308'] }
+                    gold: { name: 'Golden', color: '#FFD700', gradient: ['#FDE047', '#FFD700', '#EAB308'] },
+                    custom: { name: 'Custom', color: '#4169E1', gradient: ['#5C7CFA', '#4169E1', '#364FC7'] }
                 };
                 this.fuelColors = {
                     blue: { name: 'Ocean', color: '#00BFFF' },
                     green: { name: 'Toxic', color: '#00FF00' },
                     purple: { name: 'Plasma', color: '#FF00FF' },
                     gold: { name: 'Honey', color: '#FFD700' },
-                    red: { name: 'Lava', color: '#FF6347' }
+                    red: { name: 'Lava', color: '#FF6347' },
+                    custom: { name: 'Custom', color: this.customFuelColor }
                 };
                 
                 // Input handling
@@ -339,6 +361,35 @@
                     g: parseInt(result[2], 16),
                     b: parseInt(result[3], 16)
                 } : { r: 0, g: 191, b: 255 }; // Default to blue if parsing fails
+            }
+            
+            rgbToHsl(r, g, b) {
+                r /= 255;
+                g /= 255;
+                b /= 255;
+                
+                const max = Math.max(r, g, b);
+                const min = Math.min(r, g, b);
+                let h, s, l = (max + min) / 2;
+                
+                if (max === min) {
+                    h = s = 0; // achromatic
+                } else {
+                    const d = max - min;
+                    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                    
+                    switch (max) {
+                        case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+                        case g: h = ((b - r) / d + 2) / 6; break;
+                        case b: h = ((r - g) / d + 4) / 6; break;
+                    }
+                }
+                
+                return {
+                    h: Math.round(h * 360),
+                    s: Math.round(s * 100),
+                    l: Math.round(l * 100)
+                };
             }
             
             initSounds() {
@@ -640,54 +691,87 @@
             }
             
             addWaveComplexity() {
-                // Progressive obstacle difficulty with challenging puzzles
-                if (this.wave <= 2) {
-                    // Waves 1-2: Introduction to puzzle mechanics
+                // Progressive obstacle difficulty with smoother progression
+                if (this.wave === 1) {
+                    // Wave 1: Very basic introduction
+                    this.addSimpleDetour();
+                } else if (this.wave === 2) {
+                    // Wave 2: Introduce path blockers
                     this.addPathBlockers(1);
                     this.addSimpleDetour();
-                } else if (this.wave <= 4) {
-                    // Waves 3-4: Multiple paths and choices
+                } else if (this.wave === 3) {
+                    // Wave 3: Gentle increase - add one new element
+                    this.addPathBlockers(1);
+                    this.addLShapedWalls(1);
+                    this.addStoneChunks(2);
+                } else if (this.wave === 4) {
+                    // Wave 4: Slightly more complex but still manageable
+                    this.addPathBlockers(1);
+                    this.addLShapedWalls(1);
+                    this.addFakePaths(1);
+                    this.addStoneChunks(3);
+                } else if (this.wave === 5) {
+                    // Wave 5: Introduce zigzag paths
                     this.addPathBlockers(2);
                     this.addLShapedWalls(1);
                     this.addFakePaths(1);
                     this.addZigzagPath(1);
-                    this.addStoneChunks(2 + Math.floor(this.wave / 2));
-                } else if (this.wave <= 6) {
-                    // Waves 5-6: Much harder - Complex routing puzzles
-                    this.addPathBlockers(3); // Increased from 2
-                    this.addLShapedWalls(3); // Increased from 2
-                    this.addFloatingPlatforms(2); // Increased from 1
-                    this.addFakePaths(3); // Increased from 2
-                    this.addZigzagPath(3); // Increased from 2
+                    this.addStoneChunks(4);
+                } else if (this.wave === 6) {
+                    // Wave 6: Significant difficulty increase
+                    this.addPathBlockers(3);
+                    this.addLShapedWalls(3);
+                    this.addFloatingPlatforms(2);
+                    this.addFakePaths(3);
+                    this.addZigzagPath(2);
+                    this.addUTurnPuzzle();
+                    this.addStoneChunks(8);
+                } else if (this.wave === 7) {
+                    // Wave 7: Add more complex puzzles
+                    this.addPathBlockers(4);
+                    this.addLShapedWalls(3);
+                    this.addFloatingPlatforms(2);
+                    this.addFakePaths(3);
+                    this.addZigzagPath(3);
                     this.addUTurnPuzzle();
                     this.addOneWayValves();
-                    this.addMazeSection(1); // Added maze section
-                    this.addStoneChunks(6 + this.wave); // Increased from 4
-                } else if (this.wave <= 8) {
-                    // Waves 7-8: Advanced puzzles - even harder
-                    this.addPathBlockers(4); // Increased from 3
-                    this.addLShapedWalls(3); // Increased from 2
-                    this.addFloatingPlatforms(3); // Increased from 2
-                    this.addMazeSection(2); // Increased from 1
-                    this.addFakePaths(3); // Increased from 2
-                    this.addSpiralPuzzle();
-                    this.addZigzagPath(3); // Increased from 2
-                    this.addWaterReservoirs();
-                    this.addUTurnPuzzle(); // Added U-turn
-                    this.addStoneChunks(8 + this.wave); // Increased from 6
+                    this.addStoneChunks(10);
+                } else if (this.wave === 8) {
+                    // Wave 8: Maximum base difficulty
+                    this.addPathBlockers(4);
+                    this.addLShapedWalls(4);
+                    this.addFloatingPlatforms(3);
+                    this.addFakePaths(4);
+                    this.addZigzagPath(3);
+                    this.addUTurnPuzzle();
+                    this.addOneWayValves();
+                    this.addMazeSection(1);
+                    this.addStoneChunks(12);
+                } else if (this.wave <= 10) {
+                    // Waves 9-10: Introduce maze sections
+                    this.addPathBlockers(3);
+                    this.addLShapedWalls(3);
+                    this.addFloatingPlatforms(2);
+                    this.addMazeSection(1);
+                    this.addFakePaths(3);
+                    this.addZigzagPath(2);
+                    this.addUTurnPuzzle();
+                    this.addOneWayValves();
+                    this.addStoneChunks(7 + this.wave - 8);
                 } else {
-                    // Waves 9+: Maximum complexity with intricate puzzles
-                    this.addPathBlockers(4); // Increased from 3
-                    this.addLShapedWalls(4); // Increased from 3
-                    this.addFloatingPlatforms(3); // Increased from 2
-                    this.addMazeSection(Math.min(this.wave - 8, 4)); // Increased max from 3
-                    this.addFakePaths(4); // Increased from 3
+                    // Waves 11+: Maximum complexity with all features
+                    this.addPathBlockers(3 + Math.floor((this.wave - 10) / 3));
+                    this.addLShapedWalls(3 + Math.floor((this.wave - 10) / 4));
+                    this.addFloatingPlatforms(2 + Math.floor((this.wave - 10) / 5));
+                    this.addMazeSection(Math.min(this.wave - 9, 3));
+                    this.addFakePaths(3 + Math.floor((this.wave - 10) / 4));
                     this.addSpiralPuzzle();
+                    this.addZigzagPath(3);
                     this.addUTurnPuzzle();
                     this.addMultiLevelPuzzle();
                     this.addOneWayValves();
                     this.addWaterReservoirs();
-                    this.addStoneChunks(10 + this.wave); // Increased from 8
+                    this.addStoneChunks(8 + Math.floor(this.wave / 2));
                 }
             }
             
@@ -1210,7 +1294,16 @@
                     if (this.showPauseMenu) {
                         this.handlePauseMenuClick();
                     } else if (this.currentState === GAME_STATE.MENU) {
+                        // Only handle menu clicks if not in a sub-screen
+                        if (!this.showShooterCustomization && !this.showFuelColorPicker) {
                         this.handleMenuClick();
+                        }
+                        // Handle customization screens separately
+                        if (this.showShooterCustomization) {
+                            this.handleShooterCustomizationClick();
+                        } else if (this.showFuelColorPicker) {
+                            this.handleColorPickerClick();
+                        }
                     } else if (this.currentState === GAME_STATE.PHASE1) {
                         if (this.showingCongrats) {
                             this.handleCongratsClick();
@@ -1310,28 +1403,20 @@
                         this.showInstructions = false;
                     }
                 } else if (this.showCustomization) {
-                    // Check skin selection
-                    let skinX = 80;
-                    for (const [key, skin] of Object.entries(this.skins)) {
-                        if (this.mouse.x > skinX && this.mouse.x < skinX + 120 &&
-                            this.mouse.y > 140 && this.mouse.y < 180) {
-                            this.selectedSkin = key;
-                            localStorage.setItem('pipelinePanicSkin', key);
-                            this.playSound('powerup');
-                        }
-                        skinX += 130;
+                    // Check Shooter Skins button
+                    if (this.mouse.x > 80 && this.mouse.x < 230 &&
+                        this.mouse.y > 140 && this.mouse.y < 180) {
+                        this.showCustomization = false;
+                        this.showShooterCustomization = true;
+                        this.playSound('dig');
                     }
                     
-                    // Check fuel color selection
-                    let fuelX = 80;
-                    for (const [key, fuel] of Object.entries(this.fuelColors)) {
-                        if (this.mouse.x > fuelX && this.mouse.x < fuelX + 120 &&
-                            this.mouse.y > 220 && this.mouse.y < 260) {
-                            this.selectedFuelColor = key;
-                            localStorage.setItem('pipelinePanicFuelColor', key);
-                            this.playSound('powerup');
-                        }
-                        fuelX += 130;
+                    // Check Choose Color button
+                    if (this.mouse.x > 80 && this.mouse.x < 230 &&
+                        this.mouse.y > 220 && this.mouse.y < 260) {
+                        this.showCustomization = false;
+                        this.showFuelColorPicker = true;
+                        this.playSound('dig');
                     }
                     
                     // Back button from customization
@@ -1339,6 +1424,7 @@
                         this.mouse.y > 290 && this.mouse.y < 330) {
                         this.showCustomization = false;
                     }
+
                 } else if (this.showLeaderboard) {
                     // Back button from leaderboard
                     if (this.mouse.x > centerX - 50 && this.mouse.x < centerX + 50 &&
@@ -1747,10 +1833,15 @@
                     count = 5;
                     baseHP = 4;
                     sizeVariation = 10;
-                } else if (this.wave <= 5) {
-                    // Waves 4-5: Gradual increase
-                    count = 6 + (this.wave - 3);
-                    baseHP = 5 + Math.floor((this.wave - 3) * 0.5);
+                } else if (this.wave === 4) {
+                    // Wave 4: Easier difficulty
+                    count = 5;
+                    baseHP = 4;
+                    sizeVariation = 12;
+                } else if (this.wave === 5) {
+                    // Wave 5: Slightly easier
+                    count = 6;
+                    baseHP = 4;
                     sizeVariation = 15;
                 } else if (this.wave <= 8) {
                     // Waves 6-8: Challenging but fair
@@ -2243,13 +2334,14 @@
             
             submitGameOverName() {
                 const playerName = this.gameOverName.trim() || 'Anonymous';
-                this.addToLeaderboard(playerName, this.score, this.wave);
+                const rank = this.addToLeaderboard(playerName, this.score, this.wave);
                 this.gameOverNameSubmitted = true;
+                this.showPlayerRank = true;
                 
-                // Show leaderboard for 2 seconds then return to menu
+                // Show rank for a moment before transitioning
                 setTimeout(() => {
                     this.returnToMenuFromGameOver();
-                }, 2000);
+                }, 3000); // Increased to 3 seconds to show rank
             }
             
             returnToMenuFromGameOver() {
@@ -2285,19 +2377,52 @@
                 localStorage.setItem('pipelinePanicLeaderboard', JSON.stringify(this.leaderboard));
             }
             
+            loadFullLeaderboard() {
+                const saved = localStorage.getItem('pipelinePanicFullLeaderboard');
+                return saved ? JSON.parse(saved) : [];
+            }
+            
+            saveFullLeaderboard(leaderboard) {
+                localStorage.setItem('pipelinePanicFullLeaderboard', JSON.stringify(leaderboard));
+            }
+            
             addToLeaderboard(name, score, wave) {
-                this.leaderboard.push({
+                // Load full leaderboard (not limited to 10)
+                const fullLeaderboard = this.loadFullLeaderboard();
+                
+                const newEntry = {
                     name: name.substring(0, 20), // Limit name length
                     score: score,
                     wave: wave,
                     date: new Date().toLocaleDateString()
-                });
+                };
                 
-                // Sort by score (descending) and keep only top 10
-                this.leaderboard.sort((a, b) => b.score - a.score);
-                this.leaderboard = this.leaderboard.slice(0, 10);
+                fullLeaderboard.push(newEntry);
                 
+                // Sort by score (descending)
+                fullLeaderboard.sort((a, b) => b.score - a.score);
+                
+                // Find player's rank
+                let playerRank = -1;
+                for (let i = 0; i < fullLeaderboard.length; i++) {
+                    if (fullLeaderboard[i] === newEntry) {
+                        playerRank = i + 1;
+                        break;
+                    }
+                }
+                
+                // Save full leaderboard
+                this.saveFullLeaderboard(fullLeaderboard);
+                
+                // Update the displayed leaderboard (top 10)
+                this.leaderboard = fullLeaderboard.slice(0, 10);
                 this.saveLeaderboard();
+                
+                // Store player's rank and entry for display
+                this.playerRank = playerRank;
+                this.playerEntry = newEntry;
+                
+                return playerRank;
             }
 
             updateUI() {
@@ -2546,9 +2671,18 @@
                     this.ctx.textAlign = 'center';
                     this.ctx.fillText('High Score: ' + (localStorage.getItem('highScore') || 0), 110, 365);
                     
-                    // Display selected skin preview on the right
+                    // Display selected skin preview on the right with background
                     this.ctx.textAlign = 'center'; // Reset alignment for skin preview
-                    this.renderSkinPreview(600, 180);
+                    
+                    // Draw background for skin preview
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    this.ctx.fillRect(570, 160, 120, 100);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(570, 160, 120, 100);
+                    
+                    // Center the preview in the box
+                    this.renderSkinPreview(590, 190);
                     
                 } else if (this.showInstructions) {
                     // Instructions screen with dark background
@@ -2655,54 +2789,101 @@
                     this.ctx.textAlign = 'left';
                     this.ctx.fillText('Shooter Skins:', 80, 130);
                     
-                    let skinX = 80;
-                    for (const [key, skin] of Object.entries(this.skins)) {
-                        const isSelected = this.selectedSkin === key;
-                        
-                        // Button background
-                        this.ctx.fillStyle = isSelected ? skin.color : '#444444';
-                        this.ctx.fillRect(skinX, 140, 120, 40);
-                        
-                        if (isSelected) {
-                            this.ctx.strokeStyle = '#FFD700';
-                            this.ctx.lineWidth = 3;
-                            this.ctx.strokeRect(skinX, 140, 120, 40);
-                        }
-                        
-                        this.ctx.font = '16px Arial';
-                        this.ctx.fillStyle = '#FFFFFF';
-                        this.ctx.textAlign = 'center';
-                        this.ctx.fillText(skin.name, skinX + 60, 165);
-                        
-                        skinX += 130;
-                    }
+                    // Shooter Skins button
+                    this.ctx.fillStyle = '#FF6B35';
+                    this.ctx.fillRect(80, 140, 150, 40);
+                    this.ctx.strokeStyle = '#CC5500';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(80, 140, 150, 40);
+                    
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Customize', 155, 165);
+                    
+                    // Current skin preview with outline
+                    this.ctx.save();
+                    this.ctx.translate(250, 140);
+                    
+                    // Draw golden outline
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+                    this.ctx.shadowBlur = 5;
+                    
+                    // Scale down for preview
+                    this.ctx.scale(0.5, 0.5);
+                    
+                    // Draw the shooter with outline
+                    const outlineOffset = 2;
+                    this.ctx.save();
+                    this.ctx.translate(0, 0);
+                    this.ctx.scale(1.1, 1.1);
+                    this.drawGunPreview(0, 0, true); // true for outline mode
+                    this.ctx.restore();
+                    
+                    // Reset shadow and draw the actual gun
+                    this.ctx.shadowBlur = 0;
+                    this.ctx.strokeStyle = null;
+                    this.drawGunPreview(0, 0);
+                    this.ctx.restore();
+                    
+                    this.ctx.font = '14px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Current', 290, 135);
+                    
+                    // No inline panels anymore - full screens only
                     
                     // Fuel colors
                     this.ctx.font = 'bold 20px Arial';
                     this.ctx.textAlign = 'left';
                     this.ctx.fillText('Fuel Colors:', 80, 210);
                     
-                    let fuelX = 80;
-                    for (const [key, fuel] of Object.entries(this.fuelColors)) {
-                        const isSelected = this.selectedFuelColor === key;
-                        
-                        // Button background
-                        this.ctx.fillStyle = isSelected ? fuel.color : '#444444';
-                        this.ctx.fillRect(fuelX, 220, 120, 40);
-                        
-                        if (isSelected) {
-                            this.ctx.strokeStyle = '#FFD700';
-                            this.ctx.lineWidth = 3;
-                            this.ctx.strokeRect(fuelX, 220, 120, 40);
-                        }
-                        
-                        this.ctx.font = '16px Arial';
-                        this.ctx.fillStyle = '#FFFFFF';
-                        this.ctx.textAlign = 'center';
-                        this.ctx.fillText(fuel.name, fuelX + 60, 245);
-                        
-                        fuelX += 130;
-                    }
+                    // Choose Color button
+                    this.ctx.fillStyle = '#2196F3';
+                    this.ctx.fillRect(80, 220, 150, 40);
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(80, 220, 150, 40);
+                    
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Choose Color', 155, 245);
+                    
+                    // Current color preview
+                    const currentFuelColor = this.fuelColors[this.selectedFuelColor];
+                    this.ctx.fillStyle = currentFuelColor.color;
+                    this.ctx.fillRect(250, 220, 80, 40);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(250, 220, 80, 40);
+                    
+                    this.ctx.font = '14px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('Current', 290, 215);
+                    
+                    // No inline panels anymore - full screens only
+                    
+                    // Add skin preview on the right side
+                    this.ctx.save();
+                    
+                    // Background for preview
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    this.ctx.fillRect(520, 140, 120, 100);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(520, 140, 120, 100);
+                    
+                    this.ctx.font = 'bold 14px Arial';
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Selected Skin', 580, 135);
+                    
+                    // Center the preview in the box
+                    this.renderSkinPreview(540, 170, false);
+                    this.ctx.restore();
                     
                     // Back button
                     this.ctx.fillStyle = '#FF5722';
@@ -2735,10 +2916,45 @@
                     this.ctx.fillText('Wave', 500, 130);
                     this.ctx.fillText('Date', 600, 130);
                     
+                    // Draw vertical lines for columns
+                    this.ctx.strokeStyle = '#666666';
+                    this.ctx.lineWidth = 1;
+                    
+                    // Line after Rank column
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(160, 115);
+                    this.ctx.lineTo(160, 335);
+                    this.ctx.stroke();
+                    
+                    // Line after Name column
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(380, 115);
+                    this.ctx.lineTo(380, 335);
+                    this.ctx.stroke();
+                    
+                    // Line after Score column
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(480, 115);
+                    this.ctx.lineTo(480, 335);
+                    this.ctx.stroke();
+                    
+                    // Line after Wave column
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(580, 115);
+                    this.ctx.lineTo(580, 335);
+                    this.ctx.stroke();
+                    
+                    // Horizontal line under headers
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(80, 140);
+                    this.ctx.lineTo(720, 140);
+                    this.ctx.stroke();
+                    
                     // Draw leaderboard entries
                     this.ctx.font = '16px Arial';
                     this.leaderboard = this.loadLeaderboard(); // Refresh leaderboard
-                    const displayCount = Math.min(this.leaderboard.length, 8);
+                    const maxDisplay = 7; // Show top 7 entries
+                    const displayCount = Math.min(this.leaderboard.length, maxDisplay);
                     
                     for (let i = 0; i < displayCount; i++) {
                         const entry = this.leaderboard[i];
@@ -2759,6 +2975,35 @@
                         this.ctx.fillText(entry.date, 600, y);
                     }
                     
+                    // Show player's rank if they're outside top 7 and we just came from game over
+                    if (this.playerRank && this.playerRank > maxDisplay && this.playerEntry) {
+                        // Draw dots - closer to last entry and ensure it fits in box
+                        const dotsY = Math.min(160 + displayCount * 25, 310);
+                        this.ctx.fillStyle = '#666666';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText('⋮', 100, dotsY);
+                        this.ctx.fillText('⋮', 180, dotsY);
+                        this.ctx.fillText('⋮', 400, dotsY);
+                        this.ctx.fillText('⋮', 500, dotsY);
+                        this.ctx.fillText('⋮', 600, dotsY);
+                        
+                        // Draw player's entry - ensure it stays within box
+                        const playerY = Math.min(dotsY + 20, 330);
+                        this.ctx.fillStyle = '#4CAF50'; // Highlight player's entry in green
+                        this.ctx.textAlign = 'left';
+                        this.ctx.fillText(`#${this.playerRank}`, 100, playerY);
+                        this.ctx.fillText(this.playerEntry.name, 180, playerY);
+                        this.ctx.fillText(this.playerEntry.score.toString(), 400, playerY);
+                        this.ctx.fillText(this.playerEntry.wave.toString(), 500, playerY);
+                        this.ctx.fillText(this.playerEntry.date, 600, playerY);
+                        
+                        // Clear player data after showing once
+                        setTimeout(() => {
+                            this.playerRank = null;
+                            this.playerEntry = null;
+                        }, 5000);
+                    }
+                    
                     if (this.leaderboard.length === 0) {
                         this.ctx.fillStyle = '#CCCCCC';
                         this.ctx.textAlign = 'center';
@@ -2777,6 +3022,16 @@
                     this.ctx.textAlign = 'center';
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillText('BACK', centerX, 360);
+                }
+                
+                // Render shooter customization full screen
+                if (this.showShooterCustomization) {
+                    this.renderShooterCustomization();
+                }
+                
+                // Render fuel color picker full screen
+                if (this.showFuelColorPicker) {
+                    this.renderColorPicker();
                 }
             }
             
@@ -3045,46 +3300,94 @@
                 this.ctx.fillRect(0, 0, 800, 400);
                 
                 if (this.showPauseInstructions) {
-                    // Instructions screen
-                    this.ctx.font = 'bold 36px Arial';
-                    this.ctx.fillStyle = '#00FFFF';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.fillText('GAME INSTRUCTIONS', 400, 50);
+                    // Instructions screen with two-box layout matching main menu
+                    const centerX = 400;
                     
-                    this.ctx.font = '18px Arial';
-                    this.ctx.textAlign = 'left';
+                    // Title
+                    this.ctx.font = 'bold 36px Arial';
                     this.ctx.fillStyle = '#FFFFFF';
-                    const instructions = [
-                        'PHASE 1 - FUEL COLLECTION:',
-                        '• Click and drag to dig tunnels through dirt',
-                        '• Guide water from tap to tank below',
-                        '• Fill tank to at least 20% (100% to skip timer)',
-                        '• Collect power-up diamonds for Phase 2 boosts',
-                        '',
-                        'PHASE 2 - BOULDER DESTRUCTION:',
-                        '• Use A/D or ←/→ keys to move your cannon',
-                        '• Cannon fires automatically with unlimited ammo',
-                        '• Destroy all boulders before time runs out',
-                        '• Larger boulders split when destroyed!'
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('HOW TO PLAY', centerX, 50);
+                    
+                    // Phase 1 Box (Left)
+                    this.ctx.fillStyle = 'rgba(76, 175, 80, 0.2)';
+                    this.ctx.fillRect(50, 80, 320, 240);
+                    this.ctx.strokeStyle = '#4CAF50';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(50, 80, 320, 240);
+                    
+                    // Phase 1 Title
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('PHASE 1: FUEL COLLECTION', 210, 110);
+                    
+                    // Phase 1 Instructions
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    const phase1Instructions = [
+                        '• Click and drag to dig tunnels',
+                        '  through the dirt',
+                        '• Guide water from tap to tank',
+                        '• Fill tank to at least 20%',
+                        '  (100% to skip timer)',
+                        '• Collect power-up diamonds',
+                        '  for Phase 2 boosts',
+                        '• Watch out for obstacles!'
                     ];
                     
-                    let y = 90;
-                    for (const line of instructions) {
-                        this.ctx.fillText(line, 100, y);
-                        y += 25;
+                    let y = 140;
+                    for (const line of phase1Instructions) {
+                        this.ctx.fillText(line, 70, y);
+                        y += 22;
+                    }
+                    
+                    // Phase 2 Box (Right)
+                    this.ctx.fillStyle = 'rgba(255, 152, 0, 0.2)';
+                    this.ctx.fillRect(430, 80, 320, 240);
+                    this.ctx.strokeStyle = '#FF9800';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(430, 80, 320, 240);
+                    
+                    // Phase 2 Title
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FF9800';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('PHASE 2: BOULDER BATTLE', 590, 110);
+                    
+                    // Phase 2 Instructions
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    const phase2Instructions = [
+                        '• Use A/D or ←/→ keys to',
+                        '  move your cannon',
+                        '• Auto-fire shoots at',
+                        '  bouncing boulders',
+                        '• Destroy all boulders before',
+                        '  time runs out!',
+                        '• Larger boulders split when',
+                        '  destroyed into smaller ones'
+                    ];
+                    
+                    y = 140;
+                    for (const line of phase2Instructions) {
+                        this.ctx.fillText(line, 450, y);
+                        y += 22;
                     }
                     
                     // Back button
                     this.ctx.fillStyle = '#2196F3';
-                    this.ctx.fillRect(340, 340, 120, 40);
+                    this.ctx.fillRect(centerX - 50, 340, 100, 40);
                     this.ctx.strokeStyle = '#1565C0';
                     this.ctx.lineWidth = 2;
-                    this.ctx.strokeRect(340, 340, 120, 40);
+                    this.ctx.strokeRect(centerX - 50, 340, 100, 40);
                     
                     this.ctx.font = 'bold 20px Arial';
                     this.ctx.textAlign = 'center';
                     this.ctx.fillStyle = '#FFFFFF';
-                    this.ctx.fillText('BACK', 400, 365);
+                    this.ctx.fillText('BACK', centerX, 365);
                 } else {
                     // Main pause menu
                     this.ctx.font = 'bold 48px Arial';
@@ -3144,6 +3447,858 @@
                 const adjust = (c) => Math.min(255, Math.floor(c * brightness));
                 
                 return `#${adjust(r).toString(16).padStart(2, '0')}${adjust(g).toString(16).padStart(2, '0')}${adjust(b).toString(16).padStart(2, '0')}`;
+            }
+            
+            renderColorPicker() {
+                // Full screen customization
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                const x = 150;
+                const y = 50;
+                const width = 500;
+                const height = 300;
+                
+                // Background panel
+                this.ctx.fillStyle = 'rgba(40, 40, 40, 0.95)';
+                this.ctx.fillRect(x, y, width, height);
+                this.ctx.strokeStyle = '#FFD700';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x, y, width, height);
+                
+                // Title
+                this.ctx.font = 'bold 16px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Pick Your Fuel Color', x + width/2, y + 20);
+                
+                // Hue slider
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '14px Arial';
+                this.ctx.textAlign = 'left';
+                this.ctx.fillText('Hue:', x + 10, y + 45);
+                
+                // Draw hue gradient
+                const hueGradient = this.ctx.createLinearGradient(x + 50, y + 35, x + 250, y + 35);
+                for (let i = 0; i <= 360; i += 30) {
+                    hueGradient.addColorStop(i / 360, `hsl(${i}, 100%, 50%)`);
+                }
+                this.ctx.fillStyle = hueGradient;
+                this.ctx.fillRect(x + 50, y + 35, 200, 15);
+                
+                // Hue slider handle
+                const hueX = x + 50 + (this.colorPickerHue / 360) * 200;
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.arc(hueX, y + 42.5, 8, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Saturation slider
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '14px Arial';
+                this.ctx.fillText('Saturation:', x + 10, y + 75);
+                
+                // Draw saturation gradient
+                const satGradient = this.ctx.createLinearGradient(x + 80, y + 65, x + 250, y + 65);
+                satGradient.addColorStop(0, `hsl(${this.colorPickerHue}, 0%, 50%)`);
+                satGradient.addColorStop(1, `hsl(${this.colorPickerHue}, 100%, 50%)`);
+                this.ctx.fillStyle = satGradient;
+                this.ctx.fillRect(x + 80, y + 65, 170, 15);
+                
+                // Saturation slider handle
+                const satX = x + 80 + (this.colorPickerSaturation / 100) * 170;
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.beginPath();
+                this.ctx.arc(satX, y + 72.5, 8, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Lightness slider
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '14px Arial';
+                this.ctx.fillText('Lightness:', x + 10, y + 105);
+                
+                // Draw lightness gradient
+                const lightGradient = this.ctx.createLinearGradient(x + 80, y + 95, x + 250, y + 95);
+                lightGradient.addColorStop(0, `hsl(${this.colorPickerHue}, ${this.colorPickerSaturation}%, 0%)`);
+                lightGradient.addColorStop(0.5, `hsl(${this.colorPickerHue}, ${this.colorPickerSaturation}%, 50%)`);
+                lightGradient.addColorStop(1, `hsl(${this.colorPickerHue}, ${this.colorPickerSaturation}%, 100%)`);
+                this.ctx.fillStyle = lightGradient;
+                this.ctx.fillRect(x + 80, y + 95, 170, 15);
+                
+                // Lightness slider handle
+                const lightX = x + 80 + (this.colorPickerLightness / 100) * 170;
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.beginPath();
+                this.ctx.arc(lightX, y + 102.5, 8, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Color preview
+                const previewColor = `hsl(${this.colorPickerHue}, ${this.colorPickerSaturation}%, ${this.colorPickerLightness}%)`;
+                this.ctx.fillStyle = previewColor;
+                this.ctx.fillRect(x + 20, y + 125, 100, 50);
+                this.ctx.strokeStyle = '#FFFFFF';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x + 20, y + 125, 100, 50);
+                
+                this.ctx.font = '12px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Preview', x + 70, y + 190);
+                
+                // Apply button
+                this.ctx.fillStyle = '#4CAF50';
+                this.ctx.fillRect(x + 180, y + 135, 80, 30);
+                this.ctx.strokeStyle = '#2E7D32';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x + 180, y + 135, 80, 30);
+                
+                this.ctx.font = 'bold 16px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText('Apply', x + 220, y + 155);
+                
+                // Back button
+                this.ctx.fillStyle = '#FF5722';
+                this.ctx.fillRect(x + 50, y + 250, 100, 35);
+                this.ctx.strokeStyle = '#D84315';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x + 50, y + 250, 100, 35);
+                
+                this.ctx.font = 'bold 16px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText('BACK', x + 100, y + 270);
+            }
+            
+            renderShooterColorPicker(x, y) {
+                const width = 200;
+                const height = 200;
+                const type = this.activeShooterColorPicker;
+                const sliders = this.shooterColorSliders[type];
+                
+                // Background
+                this.ctx.fillStyle = 'rgba(40, 40, 40, 0.95)';
+                this.ctx.fillRect(x, y, width, height);
+                this.ctx.strokeStyle = '#FFD700';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x, y, width, height);
+                
+                // Title
+                this.ctx.font = 'bold 14px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                const titles = { body: 'Body Color', barrel: 'Barrel Color', detail: 'Detail Color' };
+                this.ctx.fillText(titles[type], x + width/2, y + 20);
+                
+                // Hue slider
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '12px Arial';
+                this.ctx.textAlign = 'left';
+                this.ctx.fillText('Hue:', x + 10, y + 45);
+                
+                // Draw hue gradient
+                const hueGradient = this.ctx.createLinearGradient(x + 40, y + 35, x + 180, y + 35);
+                for (let i = 0; i <= 360; i += 30) {
+                    hueGradient.addColorStop(i / 360, `hsl(${i}, 100%, 50%)`);
+                }
+                this.ctx.fillStyle = hueGradient;
+                this.ctx.fillRect(x + 40, y + 35, 140, 12);
+                
+                // Hue handle
+                const hueX = x + 40 + (sliders.h / 360) * 140;
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.arc(hueX, y + 41, 6, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Saturation slider
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '12px Arial';
+                this.ctx.fillText('Sat:', x + 10, y + 70);
+                
+                // Draw saturation gradient
+                const satGradient = this.ctx.createLinearGradient(x + 40, y + 60, x + 180, y + 60);
+                satGradient.addColorStop(0, `hsl(${sliders.h}, 0%, 50%)`);
+                satGradient.addColorStop(1, `hsl(${sliders.h}, 100%, 50%)`);
+                this.ctx.fillStyle = satGradient;
+                this.ctx.fillRect(x + 40, y + 60, 140, 12);
+                
+                // Saturation handle
+                const satX = x + 40 + (sliders.s / 100) * 140;
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.beginPath();
+                this.ctx.arc(satX, y + 66, 6, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Lightness slider
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '12px Arial';
+                this.ctx.fillText('Light:', x + 10, y + 95);
+                
+                // Draw lightness gradient
+                const lightGradient = this.ctx.createLinearGradient(x + 40, y + 85, x + 180, y + 85);
+                lightGradient.addColorStop(0, `hsl(${sliders.h}, ${sliders.s}%, 0%)`);
+                lightGradient.addColorStop(0.5, `hsl(${sliders.h}, ${sliders.s}%, 50%)`);
+                lightGradient.addColorStop(1, `hsl(${sliders.h}, ${sliders.s}%, 100%)`);
+                this.ctx.fillStyle = lightGradient;
+                this.ctx.fillRect(x + 40, y + 85, 140, 12);
+                
+                // Lightness handle
+                const lightX = x + 40 + (sliders.l / 100) * 140;
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.beginPath();
+                this.ctx.arc(lightX, y + 91, 6, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Color preview
+                const previewColor = `hsl(${sliders.h}, ${sliders.s}%, ${sliders.l}%)`;
+                this.ctx.fillStyle = previewColor;
+                this.ctx.fillRect(x + 60, y + 110, 80, 40);
+                this.ctx.strokeStyle = '#FFFFFF';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x + 60, y + 110, 80, 40);
+                
+                // Update button
+                this.ctx.fillStyle = '#4CAF50';
+                this.ctx.fillRect(x + 50, y + 160, 100, 30);
+                this.ctx.strokeStyle = '#2E7D32';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x + 50, y + 160, 100, 30);
+                
+                this.ctx.font = 'bold 14px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Update', x + 100, y + 178);
+            }
+            
+            handleShooterColorPickerClick(pickerX, pickerY) {
+                const x = this.mouse.x;
+                const y = this.mouse.y;
+                const type = this.activeShooterColorPicker;
+                const sliders = this.shooterColorSliders[type];
+                
+                // Check hue slider
+                if (x >= pickerX + 40 && x <= pickerX + 180 && y >= pickerY + 35 && y <= pickerY + 47) {
+                    sliders.h = Math.round(((x - pickerX - 40) / 140) * 360);
+                    this.playSound('dig');
+                }
+                
+                // Check saturation slider
+                if (x >= pickerX + 40 && x <= pickerX + 180 && y >= pickerY + 60 && y <= pickerY + 72) {
+                    sliders.s = Math.round(((x - pickerX - 40) / 140) * 100);
+                    this.playSound('dig');
+                }
+                
+                // Check lightness slider
+                if (x >= pickerX + 40 && x <= pickerX + 180 && y >= pickerY + 85 && y <= pickerY + 97) {
+                    sliders.l = Math.round(((x - pickerX - 40) / 140) * 100);
+                    this.playSound('dig');
+                }
+                
+                // Check update button
+                if (x >= pickerX + 50 && x <= pickerX + 150 && y >= pickerY + 160 && y <= pickerY + 190) {
+                    // Convert HSL to hex and update color
+                    const hslColor = `hsl(${sliders.h}, ${sliders.s}%, ${sliders.l}%)`;
+                    const rgb = this.hslToRgb(sliders.h, sliders.s, sliders.l);
+                    const hex = this.rgbToHex(rgb.r, rgb.g, rgb.b);
+                    this.customShooterColors[type] = hex;
+                    this.playSound('powerup');
+                }
+            }
+            
+            hslToRgb(h, s, l) {
+                h /= 360;
+                s /= 100;
+                l /= 100;
+                
+                let r, g, b;
+                
+                if (s === 0) {
+                    r = g = b = l; // achromatic
+                } else {
+                    const hue2rgb = (p, q, t) => {
+                        if (t < 0) t += 1;
+                        if (t > 1) t -= 1;
+                        if (t < 1/6) return p + (q - p) * 6 * t;
+                        if (t < 1/2) return q;
+                        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                        return p;
+                    };
+                    
+                    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                    const p = 2 * l - q;
+                    r = hue2rgb(p, q, h + 1/3);
+                    g = hue2rgb(p, q, h);
+                    b = hue2rgb(p, q, h - 1/3);
+                }
+                
+                return {
+                    r: Math.round(r * 255),
+                    g: Math.round(g * 255),
+                    b: Math.round(b * 255)
+                };
+            }
+            
+            rgbToHex(r, g, b) {
+                const toHex = (n) => {
+                    const hex = n.toString(16);
+                    return hex.length === 1 ? '0' + hex : hex;
+                };
+                return '#' + toHex(r) + toHex(g) + toHex(b);
+            }
+            
+            handleColorPickerClick() {
+                const x = this.mouse.x;
+                const y = this.mouse.y;
+                const pickerX = 150;
+                const pickerY = 50;
+                
+                // Check hue slider
+                if (x >= pickerX + 50 && x <= pickerX + 250 && y >= pickerY + 35 && y <= pickerY + 50) {
+                    this.colorPickerHue = ((x - pickerX - 50) / 200) * 360;
+                    this.playSound('dig');
+                }
+                
+                // Check saturation slider
+                if (x >= pickerX + 80 && x <= pickerX + 250 && y >= pickerY + 65 && y <= pickerY + 80) {
+                    this.colorPickerSaturation = ((x - pickerX - 80) / 170) * 100;
+                    this.playSound('dig');
+                }
+                
+                // Check lightness slider
+                if (x >= pickerX + 80 && x <= pickerX + 250 && y >= pickerY + 95 && y <= pickerY + 110) {
+                    this.colorPickerLightness = ((x - pickerX - 80) / 170) * 100;
+                    this.playSound('dig');
+                }
+                
+                // Check apply button
+                if (x >= pickerX + 180 && x <= pickerX + 260 && y >= pickerY + 135 && y <= pickerY + 165) {
+                    // Convert HSL to hex
+                    const color = this.hslToHex(this.colorPickerHue, this.colorPickerSaturation, this.colorPickerLightness);
+                    this.customFuelColor = color;
+                    this.fuelColors.custom.color = color;
+                    this.selectedFuelColor = 'custom';
+                    localStorage.setItem('pipelinePanicFuelColor', 'custom');
+                    localStorage.setItem('pipelinePanicCustomFuelColor', color);
+                    this.showFuelColorPicker = false;
+                    this.showCustomization = true;
+                    this.playSound('powerup');
+                }
+                
+                // Check back button
+                if (x >= pickerX + 50 && x <= pickerX + 150 && y >= pickerY + 250 && y <= pickerY + 285) {
+                    this.showFuelColorPicker = false;
+                    this.showCustomization = true;
+                    this.playSound('dig');
+                }
+            }
+            
+            hslToHex(h, s, l) {
+                h = h / 360;
+                s = s / 100;
+                l = l / 100;
+                
+                let r, g, b;
+                
+                if (s === 0) {
+                    r = g = b = l;
+                } else {
+                    const hue2rgb = (p, q, t) => {
+                        if (t < 0) t += 1;
+                        if (t > 1) t -= 1;
+                        if (t < 1/6) return p + (q - p) * 6 * t;
+                        if (t < 1/2) return q;
+                        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                        return p;
+                    };
+                    
+                    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                    const p = 2 * l - q;
+                    r = hue2rgb(p, q, h + 1/3);
+                    g = hue2rgb(p, q, h);
+                    b = hue2rgb(p, q, h - 1/3);
+                }
+                
+                const toHex = x => {
+                    const hex = Math.round(x * 255).toString(16);
+                    return hex.length === 1 ? '0' + hex : hex;
+                };
+                
+                return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+            }
+            
+            drawGunPreview(x, y, outlineMode = false) {
+                // Draw gun preview at given position
+                const width = 80;
+                const height = 40;
+                
+                if (outlineMode) {
+                    // Draw golden outline only
+                    const shape = this.selectedSkin === 'custom' ? this.customShooterShape : 'rectangle';
+                    this.ctx.save();
+                    this.ctx.translate(x, y);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 3;
+                    
+                    switch(shape) {
+                        case 'rounded':
+                            this.ctx.beginPath();
+                            this.ctx.roundRect(0, 0, width, height, 10);
+                            this.ctx.stroke();
+                            break;
+                        case 'hexagon':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(10, 0);
+                            this.ctx.lineTo(width - 10, 0);
+                            this.ctx.lineTo(width, height/2);
+                            this.ctx.lineTo(width - 10, height);
+                            this.ctx.lineTo(10, height);
+                            this.ctx.lineTo(0, height/2);
+                            this.ctx.closePath();
+                            this.ctx.stroke();
+                            break;
+                        case 'triangle':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(0, height);
+                            this.ctx.lineTo(width, height);
+                            this.ctx.lineTo(width/2, 0);
+                            this.ctx.closePath();
+                            this.ctx.stroke();
+                            break;
+                        case 'diamond':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(width/2, 0);
+                            this.ctx.lineTo(width, height/2);
+                            this.ctx.lineTo(width/2, height);
+                            this.ctx.lineTo(0, height/2);
+                            this.ctx.closePath();
+                            this.ctx.stroke();
+                            break;
+                        default: // rectangle
+                            this.ctx.strokeRect(0, 0, width, height);
+                    }
+                    
+                    // Draw barrel outline
+                    this.ctx.strokeRect(width/2 - 10, -10, 20, 10);
+                    this.ctx.restore();
+                } else if (this.selectedSkin === 'custom' || this.shooterCustomMode === 'custom') {
+                    // Draw custom shaped gun
+                    this.ctx.save();
+                    this.ctx.translate(x, y);
+                    
+                    const shape = this.customShooterShape;
+                    const colors = this.customShooterColors;
+                    
+                    // Draw gun body based on shape
+                    this.ctx.fillStyle = colors.body;
+                    
+                    switch(shape) {
+                        case 'rounded':
+                            this.ctx.beginPath();
+                            this.ctx.roundRect(0, 0, width, height, 10);
+                            this.ctx.fill();
+                            break;
+                        case 'hexagon':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(10, 0);
+                            this.ctx.lineTo(width - 10, 0);
+                            this.ctx.lineTo(width, height/2);
+                            this.ctx.lineTo(width - 10, height);
+                            this.ctx.lineTo(10, height);
+                            this.ctx.lineTo(0, height/2);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+                        case 'triangle':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(0, height);
+                            this.ctx.lineTo(width, height);
+                            this.ctx.lineTo(width/2, 0);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+                        case 'diamond':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(width/2, 0);
+                            this.ctx.lineTo(width, height/2);
+                            this.ctx.lineTo(width/2, height);
+                            this.ctx.lineTo(0, height/2);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+                        default: // rectangle
+                            this.ctx.fillRect(0, 0, width, height);
+                    }
+                    
+                    // Draw barrel
+                    this.ctx.fillStyle = colors.barrel;
+                    this.ctx.fillRect(width/2 - 10, -10, 20, 10);
+                    
+                    // Draw details
+                    this.ctx.fillStyle = colors.detail;
+                    this.ctx.fillRect(width/2 - 4, height/2 - 4, 8, 8);
+                    
+                    this.ctx.restore();
+                } else {
+                    // Draw preset skin
+                    const skin = this.skins[this.selectedSkin];
+                    const gunGradient = this.ctx.createLinearGradient(x, y, x, y + height);
+                    gunGradient.addColorStop(0, skin.gradient[0]);
+                    gunGradient.addColorStop(0.5, skin.gradient[1]);
+                    gunGradient.addColorStop(1, skin.gradient[2]);
+                    
+                    this.ctx.fillStyle = gunGradient;
+                    this.ctx.fillRect(x, y, width, height);
+                    
+                    // Barrel
+                    this.ctx.fillStyle = this.adjustColor(skin.gradient[2], 0.7);
+                    this.ctx.fillRect(x + width/2 - 10, y - 10, 20, 10);
+                }
+            }
+            
+            renderShooterCustomization() {
+                // Full screen customization
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                const x = 50;
+                const y = 50;
+                const width = 700;
+                const height = 300;
+                
+                // Background panel
+                this.ctx.fillStyle = 'rgba(40, 40, 40, 0.95)';
+                this.ctx.fillRect(x, y, width, height);
+                this.ctx.strokeStyle = '#FF6B35';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x, y, width, height);
+                
+                // Title
+                this.ctx.font = 'bold 18px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Shooter Customization', x + width/2, y + 25);
+                
+                // Mode buttons
+                this.ctx.font = '16px Arial';
+                
+                // Presets button
+                const presetsActive = this.shooterCustomMode === 'presets';
+                this.ctx.fillStyle = presetsActive ? '#4CAF50' : '#666666';
+                this.ctx.fillRect(x + 50, y + 40, 120, 35);
+                this.ctx.strokeStyle = presetsActive ? '#2E7D32' : '#444444';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x + 50, y + 40, 120, 35);
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText('Presets', x + 110, y + 60);
+                
+                // Custom button
+                const customActive = this.shooterCustomMode === 'custom';
+                this.ctx.fillStyle = customActive ? '#4CAF50' : '#666666';
+                this.ctx.fillRect(x + 230, y + 40, 120, 35);
+                this.ctx.strokeStyle = customActive ? '#2E7D32' : '#444444';
+                this.ctx.strokeRect(x + 230, y + 40, 120, 35);
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText('Custom', x + 290, y + 60);
+                
+                if (this.shooterCustomMode === 'presets') {
+                    // Show preset skins
+                    let skinY = y + 90;
+                    let skinX = x + 20;
+                    let col = 0;
+                    
+                    for (const [key, skin] of Object.entries(this.skins)) {
+                        const isSelected = this.selectedSkin === key;
+                        
+                        // Button background
+                        this.ctx.fillStyle = isSelected ? skin.color : '#444444';
+                        this.ctx.fillRect(skinX, skinY, 160, 40);
+                        
+                        if (isSelected) {
+                            this.ctx.strokeStyle = '#FFD700';
+                            this.ctx.lineWidth = 3;
+                            this.ctx.strokeRect(skinX, skinY, 160, 40);
+                        }
+                        
+                        this.ctx.font = '16px Arial';
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(skin.name, skinX + 80, skinY + 25);
+                        
+                        col++;
+                        if (col === 2) {
+                            col = 0;
+                            skinX = x + 20;
+                            skinY += 50;
+                        } else {
+                            skinX += 200;
+                        }
+                    }
+                    
+                    // Apply and Back buttons for presets mode
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(x + 450, y + 250, 100, 35);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(x + 450, y + 250, 100, 35);
+                    
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('APPLY', x + 500, y + 270);
+                    
+                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillRect(x + 150, y + 250, 100, 35);
+                    this.ctx.strokeStyle = '#D84315';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(x + 150, y + 250, 100, 35);
+                    
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('BACK', x + 200, y + 270);
+                    
+                    // Add skin preview on the right side for presets
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    this.ctx.fillRect(x + 470, y + 90, 120, 100);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(x + 470, y + 90, 120, 100);
+                    
+                    this.ctx.font = 'bold 14px Arial';
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Current Skin', x + 530, y + 85);
+                    
+                    // Center the preview in the box
+                    this.renderSkinPreview(x + 490, y + 120, false);
+                } else {
+                    // Custom mode - shape selection
+                    this.ctx.font = '14px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText('Shape:', x + 20, y + 100);
+                    
+                    let shapeX = x + 20;
+                    for (const shape of this.shooterShapes) {
+                        const isSelected = this.customShooterShape === shape;
+                        
+                        this.ctx.fillStyle = isSelected ? '#4CAF50' : '#666666';
+                        this.ctx.fillRect(shapeX, y + 110, 65, 30);
+                        
+                        if (isSelected) {
+                            this.ctx.strokeStyle = '#2E7D32';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.strokeRect(shapeX, y + 110, 65, 30);
+                        }
+                        
+                        this.ctx.font = '12px Arial';
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(shape, shapeX + 32.5, y + 128);
+                        
+                        shapeX += 75;
+                    }
+                    
+                    // Color sliders
+                    this.ctx.textAlign = 'left';
+                    this.ctx.font = '14px Arial';
+                    
+                    // Color selection buttons
+                    const colorTypes = ['body', 'barrel', 'detail'];
+                    const colorLabels = ['Body', 'Barrel', 'Detail'];
+                    
+                    for (let i = 0; i < colorTypes.length; i++) {
+                        const type = colorTypes[i];
+                        const label = colorLabels[i];
+                        const yPos = y + 160 + i * 30;
+                        
+                        // Label
+                    this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.fillText(label + ':', x + 20, yPos);
+                        
+                        // Color preview
+                        this.ctx.fillStyle = this.customShooterColors[type];
+                        this.ctx.fillRect(x + 80, yPos - 15, 40, 20);
+                        this.ctx.strokeStyle = this.activeShooterColorPicker === type ? '#FFD700' : '#FFFFFF';
+                        this.ctx.lineWidth = this.activeShooterColorPicker === type ? 2 : 1;
+                        this.ctx.strokeRect(x + 80, yPos - 15, 40, 20);
+                        
+                        // Edit button
+                        const editActive = this.activeShooterColorPicker === type;
+                        this.ctx.fillStyle = editActive ? '#4CAF50' : '#2196F3';
+                        this.ctx.fillRect(x + 130, yPos - 18, 50, 25);
+                        this.ctx.strokeStyle = editActive ? '#2E7D32' : '#1565C0';
+                    this.ctx.lineWidth = 1;
+                        this.ctx.strokeRect(x + 130, yPos - 18, 50, 25);
+                    
+                        this.ctx.font = '12px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText(editActive ? 'Close' : 'Edit', x + 155, yPos - 3);
+                        this.ctx.textAlign = 'left';
+                        this.ctx.font = '14px Arial';
+                    }
+                    
+                    // Show color picker for active selection on the right side
+                    if (this.activeShooterColorPicker) {
+                        this.renderShooterColorPicker(x + 480, y + 60);
+                    }
+                    
+                    // Preview - moved further down to prevent overlap with shape buttons
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.font = '14px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Preview:', x + 300, y + 170);
+                    
+                    this.ctx.save();
+                    this.ctx.translate(x + 260, y + 190);
+                    this.drawGunPreview(0, 0);
+                    this.ctx.restore();
+                    
+                    // Apply button - also moved down
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(x + 250, y + 250, 100, 35);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(x + 250, y + 250, 100, 35);
+                    
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('Apply', x + 300, y + 270);
+                    
+                    // Back button for all modes
+                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillRect(x + 50, y + 250, 100, 35);
+                    this.ctx.strokeStyle = '#D84315';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(x + 50, y + 250, 100, 35);
+                    
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('BACK', x + 100, y + 270);
+                }
+            }
+            
+            handleShooterCustomizationClick() {
+                const x = this.mouse.x;
+                const y = this.mouse.y;
+                const panelX = 50;
+                const panelY = 50;
+                
+                // Check mode buttons
+                if (y >= panelY + 40 && y <= panelY + 75) {
+                    if (x >= panelX + 50 && x <= panelX + 170) {
+                        this.shooterCustomMode = 'presets';
+                        this.playSound('dig');
+                    } else if (x >= panelX + 230 && x <= panelX + 350) {
+                        this.shooterCustomMode = 'custom';
+                        this.playSound('dig');
+                    }
+                }
+                
+                if (this.shooterCustomMode === 'presets') {
+                    // Check preset skin selection
+                    let skinY = panelY + 90;
+                    let skinX = panelX + 20;
+                    let col = 0;
+                    
+                    for (const [key, skin] of Object.entries(this.skins)) {
+                        if (x >= skinX && x <= skinX + 160 && y >= skinY && y <= skinY + 40) {
+                            this.selectedSkin = key;
+                            localStorage.setItem('pipelinePanicSkin', key);
+                            this.playSound('powerup');
+                        }
+                        
+                        col++;
+                        if (col === 2) {
+                            col = 0;
+                            skinX = panelX + 20;
+                            skinY += 50;
+                        } else {
+                            skinX += 200;
+                        }
+                    }
+                    
+                    // Check Apply button for presets mode
+                    if (x >= panelX + 450 && x <= panelX + 550 && y >= panelY + 250 && y <= panelY + 285) {
+                        this.showShooterCustomization = false;
+                        this.showCustomization = true;
+                        this.playSound('powerup');
+                    }
+                    
+                    // Check Back button for presets mode
+                    if (x >= panelX + 150 && x <= panelX + 250 && y >= panelY + 250 && y <= panelY + 285) {
+                        this.showShooterCustomization = false;
+                        this.showCustomization = true;
+                        this.playSound('dig');
+                    }
+                } else {
+                    // Check shape selection
+                    let shapeX = panelX + 20;
+                    for (const shape of this.shooterShapes) {
+                        if (x >= shapeX && x <= shapeX + 65 && y >= panelY + 110 && y <= panelY + 140) {
+                            this.customShooterShape = shape;
+                            localStorage.setItem('customShooterShape', shape);
+                            this.playSound('dig');
+                        }
+                        shapeX += 75;
+                    }
+                    
+                    // Check color edit buttons
+                    const colorTypes = ['body', 'barrel', 'detail'];
+                    for (let i = 0; i < colorTypes.length; i++) {
+                        const type = colorTypes[i];
+                        const yPos = panelY + 160 + i * 30;
+                        
+                        if (x >= panelX + 130 && x <= panelX + 180 && y >= yPos - 18 && y <= yPos + 7) {
+                            if (this.activeShooterColorPicker === type) {
+                                this.activeShooterColorPicker = null;
+                            } else {
+                                this.activeShooterColorPicker = type;
+                                // Initialize sliders with current color
+                                const rgb = this.hexToRgb(this.customShooterColors[type]);
+                                const hsl = this.rgbToHsl(rgb.r, rgb.g, rgb.b);
+                                this.shooterColorSliders[type] = { h: hsl.h, s: hsl.s, l: hsl.l };
+                            }
+                        this.playSound('dig');
+                        }
+                    }
+                    
+                    // Handle color picker if active - with updated position
+                    if (this.activeShooterColorPicker) {
+                        this.handleShooterColorPickerClick(panelX + 480, panelY + 60);
+                    }
+                    
+                    // Apply button - check updated position
+                    if (x >= panelX + 250 && x <= panelX + 350 && y >= panelY + 250 && y <= panelY + 285) {
+                        this.selectedSkin = 'custom';
+                        localStorage.setItem('pipelinePanicSkin', 'custom');
+                        localStorage.setItem('customShooterBody', this.customShooterColors.body);
+                        localStorage.setItem('customShooterBarrel', this.customShooterColors.barrel);
+                        localStorage.setItem('customShooterDetail', this.customShooterColors.detail);
+                        this.showShooterCustomization = false;
+                        this.showCustomization = true;
+                        this.playSound('powerup');
+                    }
+                    
+                    // Check Back button for custom mode
+                    if (x >= panelX + 50 && x <= panelX + 150 && y >= panelY + 250 && y <= panelY + 285) {
+                        this.showShooterCustomization = false;
+                        this.showCustomization = true;
+                        this.playSound('dig');
+                    }
+                }
             }
             
             handleGameOverClick() {
@@ -3222,11 +4377,30 @@
                 } else {
                     // Show leaderboard position
                     this.ctx.font = '24px Arial';
-                    this.ctx.fillStyle = '#FFD700';
-                    const position = this.leaderboard.findIndex(entry => entry.score === this.score && entry.name === (this.gameOverName || 'Anonymous')) + 1;
-                    if (position > 0 && position <= 10) {
-                        this.ctx.fillText(`You ranked #${position} on the leaderboard!`, centerX, centerY);
+                    
+                    if (this.playerRank && this.playerRank > 0) {
+                        if (this.playerRank <= 3) {
+                            // Top 3 gets special colors
+                            const colors = ['#FFD700', '#C0C0C0', '#CD7F32']; // Gold, Silver, Bronze
+                            this.ctx.fillStyle = colors[this.playerRank - 1];
+                            this.ctx.font = 'bold 28px Arial';
+                        } else if (this.playerRank <= 10) {
+                            this.ctx.fillStyle = '#4CAF50';
+                        } else {
+                            this.ctx.fillStyle = '#FFFFFF';
+                        }
+                        
+                        this.ctx.fillText(`You ranked #${this.playerRank}!`, centerX, centerY);
+                        
+                        // Show total players if rank is low
+                        if (this.playerRank > 10) {
+                            const totalPlayers = this.loadFullLeaderboard().length;
+                            this.ctx.font = '16px Arial';
+                            this.ctx.fillStyle = '#CCCCCC';
+                            this.ctx.fillText(`out of ${totalPlayers} players`, centerX, centerY + 25);
+                        }
                     } else {
+                        this.ctx.fillStyle = '#FFFFFF';
                         this.ctx.fillText('Thanks for playing!', centerX, centerY);
                     }
                     
@@ -3243,8 +4417,26 @@
                 }
             }
             
-            renderSkinPreview(x, y) {
+            renderSkinPreview(x, y, showLabel = true) {
                 // Draw a preview of the selected gun skin
+                if (this.selectedSkin === 'custom') {
+                    // Draw custom skin preview
+                    this.ctx.save();
+                    this.ctx.translate(x, y);
+                    this.ctx.scale(1, 1);
+                    this.drawGunPreview(0, 0);
+                    this.ctx.restore();
+                    
+                    // Add label if requested
+                    if (showLabel) {
+                        this.ctx.font = 'bold 14px Arial';
+                        this.ctx.fillStyle = '#FFD700';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText('Selected Skin', x + 40, y + 60);
+                    }
+                    return;
+                }
+                
                 const skin = this.skins[this.selectedSkin];
                 const gunGradient = this.ctx.createLinearGradient(x, y, x, y + 40);
                 gunGradient.addColorStop(0, skin.gradient[0]);
@@ -3344,11 +4536,13 @@
                 this.ctx.lineWidth = 2;
                 this.ctx.strokeRect(x, y, 80, 40);
                 
-                // Label
-                this.ctx.font = '14px Arial';
-                this.ctx.fillStyle = '#FFFFFF';
-                this.ctx.textAlign = 'center';
-                this.ctx.fillText('Selected Skin', x + 40, y + 60);
+                // Label if requested
+                if (showLabel) {
+                    this.ctx.font = '14px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('Selected Skin', x + 40, y + 60);
+                }
             }
             
             renderBackgroundDecorations() {
@@ -4093,21 +5287,85 @@
                 }
                 
                 // Render enhanced gun
-                // Gun barrel gradient based on selected skin
-                const skin = this.skins[this.selectedSkin];
-                const gunGradient = this.ctx.createLinearGradient(this.gun.x, this.gun.y, this.gun.x, this.gun.y + this.gun.height);
-                gunGradient.addColorStop(0, skin.gradient[0]);
-                gunGradient.addColorStop(0.5, skin.gradient[1]);
-                gunGradient.addColorStop(1, skin.gradient[2]);
+                if (this.selectedSkin === 'custom') {
+                    // Draw custom shaped gun
+                    this.ctx.save();
+                    this.ctx.translate(this.gun.x, this.gun.y);
+                    
+                    const shape = this.customShooterShape;
+                    const colors = this.customShooterColors;
+                    
+                    // Draw gun body based on shape
+                    this.ctx.fillStyle = colors.body;
+                    
+                    switch(shape) {
+                        case 'rounded':
+                            this.ctx.beginPath();
+                            if (this.ctx.roundRect) {
+                                this.ctx.roundRect(0, 0, this.gun.width, this.gun.height, 5 * this.scaleFactor);
+                            } else {
+                                // Fallback for browsers without roundRect
+                                this.ctx.rect(0, 0, this.gun.width, this.gun.height);
+                            }
+                            this.ctx.fill();
+                            break;
+                        case 'hexagon':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(5 * this.scaleFactor, 0);
+                            this.ctx.lineTo(this.gun.width - 5 * this.scaleFactor, 0);
+                            this.ctx.lineTo(this.gun.width, this.gun.height/2);
+                            this.ctx.lineTo(this.gun.width - 5 * this.scaleFactor, this.gun.height);
+                            this.ctx.lineTo(5 * this.scaleFactor, this.gun.height);
+                            this.ctx.lineTo(0, this.gun.height/2);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+                        case 'triangle':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(0, this.gun.height);
+                            this.ctx.lineTo(this.gun.width, this.gun.height);
+                            this.ctx.lineTo(this.gun.width/2, 0);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+                        case 'diamond':
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(this.gun.width/2, 0);
+                            this.ctx.lineTo(this.gun.width, this.gun.height/2);
+                            this.ctx.lineTo(this.gun.width/2, this.gun.height);
+                            this.ctx.lineTo(0, this.gun.height/2);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+                        default: // rectangle
+                            this.ctx.fillRect(0, 0, this.gun.width, this.gun.height);
+                    }
+                    
+                    // Draw barrel
+                    this.ctx.fillStyle = colors.barrel;
+                    this.ctx.fillRect(this.gun.width/2 - 5 * this.scaleFactor, -5 * this.scaleFactor, 10 * this.scaleFactor, 5 * this.scaleFactor);
+                    
+                    // Draw details
+                    this.ctx.fillStyle = colors.detail;
+                    this.ctx.fillRect(this.gun.width/2 - 2 * this.scaleFactor, this.gun.height/2 - 2 * this.scaleFactor, 4 * this.scaleFactor, 4 * this.scaleFactor);
+                    
+                    this.ctx.restore();
+                } else {
+                    // Gun barrel gradient based on selected skin
+                    const skin = this.skins[this.selectedSkin];
+                    const gunGradient = this.ctx.createLinearGradient(this.gun.x, this.gun.y, this.gun.x, this.gun.y + this.gun.height);
+                    gunGradient.addColorStop(0, skin.gradient[0]);
+                    gunGradient.addColorStop(0.5, skin.gradient[1]);
+                    gunGradient.addColorStop(1, skin.gradient[2]);
+                    
+                    // Gun body
+                    this.ctx.fillStyle = gunGradient;
+                    this.ctx.fillRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
                 
-                // Gun body
-                this.ctx.fillStyle = gunGradient;
-                this.ctx.fillRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
-                
-                // Different visual designs for each skin
-                const detailColor = this.adjustColor(skin.gradient[2], 0.7);
-                
-                if (this.selectedSkin === 'default') {
+                    // Different visual designs for each skin
+                    const detailColor = this.adjustColor(skin.gradient[2], 0.7);
+                    
+                    if (this.selectedSkin === 'default') {
                     // Classic design - simple with center line
                     this.ctx.fillStyle = detailColor;
                     this.ctx.fillRect(this.gun.x + 5, this.gun.y + 8, this.gun.width - 10, 4);
@@ -4196,12 +5454,13 @@
                         this.ctx.closePath();
                         this.ctx.fill();
                     }
+                    }
+                    
+                    // Gun outline
+                    this.ctx.strokeStyle = detailColor;
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
                 }
-                
-                // Gun outline
-                this.ctx.strokeStyle = detailColor;
-                this.ctx.lineWidth = 2;
-                this.ctx.strokeRect(this.gun.x, this.gun.y, this.gun.width, this.gun.height);
                 
                 // Muzzle flash effect
                 if (this.muzzleFlash > 0) {
