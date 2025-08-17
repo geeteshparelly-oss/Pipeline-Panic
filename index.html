@@ -59,6 +59,30 @@
             flex-direction: column;
             align-items: flex-end;
         }
+        
+        .game-button {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 2px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .game-button:hover {
+            background: #ff5252;
+        }
+        
+        #pauseButton {
+            background: #2196F3;
+        }
+        
+        #pauseButton:hover {
+            background: #1976D2;
+        }
 
         #centerUI {
             display: flex;
@@ -146,13 +170,14 @@
                 ⚡ Power: <span id="activePowerUp">None</span>
             </div>
             <div class="ui-element">
-                <button id="exitButton" style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">Exit</button>
+                <button id="pauseButton" class="game-button" style="background: #2196F3;">Pause</button>
+                <button id="exitButton" class="game-button">Exit</button>
             </div>
         </div>
     </div>
 
     <div id="instructions">
-        <strong>Phase 1:</strong> Click and drag to dig small tunnels • Water flows after 3-2-1 countdown • Get ANY fuel to tank!<br>
+                            <strong>Phase 1:</strong> Click and drag to dig tunnels • Water flows after countdown • Fill tank (20% min, 100% to skip timer)!<br>
         <strong>Phase 2:</strong> A/D or ←/→ to move gun • Unlimited auto-fire • Destroy boulders within 1 minute!
     </div>
 
@@ -168,14 +193,14 @@
             GUN_SPEED: 5,
             BULLET_SPEED: 8,
             // Polish parameters
-            MIN_BOUNCE_HEIGHT: 12.0,
-            BOUNCE_VARIATION: 0.15,
+            MIN_BOUNCE_HEIGHT: 14.0, // High minimum bounce
+            BOUNCE_VARIATION: 0.08, // Even less variation for stability
             AUTO_FIRE_RATE: 150, // milliseconds between shots
             DIG_RADIUS: 2.0, // radius in grid cells for fine dirt
             CAMERA_SHAKE_INTENSITY: 4,
             PARTICLE_COUNT: 12,
             // Water simulation parameters
-            WATER_FLOW_RATE: 0.3, // Reduced water flow from tap
+            WATER_FLOW_RATE: 0.15, // Much slower water flow from tap
             WATER_PRESSURE: 0.3, // Less aggressive horizontal spread
             WATER_VISCOSITY: 0.98, // Slightly thicker water
             MAX_WATER_PER_CELL: 1.0, // Maximum water in a cell
@@ -217,6 +242,9 @@
                 this.showLeaderboard = false;
                 this.leaderboard = this.loadLeaderboard();
                 this.showCustomization = false;
+                this.isPaused = false;
+                this.showPauseMenu = false;
+                this.showPauseInstructions = false;
                 
                 // Load saved customization
                 this.selectedSkin = localStorage.getItem('pipelinePanicSkin') || 'default';
@@ -231,9 +259,14 @@
                 this.phaseTimer = CONFIG.AMMO_PHASE_TIME;
                 this.fuelLevel = 0; // Gradual fuel level 0-100
                 this.dustParticles = [];
+                this.tankFull = false; // Track if tank reached 100%
+                this.showingCongrats = false; // Showing congratulations screen
                 
                 // Phase 2 variables
                 this.gun = { x: 400, y: 380, width: 40, height: 20 };
+                this.baseGunWidth = 40;
+                this.baseGunHeight = 20;
+                this.scaleFactor = 1.0;
                 this.bullets = [];
                 this.boulders = [];
                 this.lastAutoFire = 0;
@@ -263,6 +296,7 @@
                 this.collectedPowerUps = [];
                 this.activePowerUp = null;
                 this.showingPowerUpSelection = false;
+                this.boulderPhaseStartCountdown = 0;
                 
                 // Customization
                 this.selectedSkin = 'default';
@@ -394,7 +428,37 @@
                 this.fuelLevel = 0;
                 this.phaseStarted = false;
                 this.countdownTimer = 3000;
+                this.phaseTimer = CONFIG.AMMO_PHASE_TIME; // Reset phase timer!
+                
+                // Clear all UI states
                 this.showInstructions = false;
+                this.showCustomization = false;
+                this.showLeaderboard = false;
+                this.showingPowerUpSelection = false;
+                this.isPaused = false;
+                this.showPauseMenu = false;
+                this.showPauseInstructions = false;
+                
+                // Clear game over state
+                this.gameOverName = '';
+                this.gameOverNameSubmitted = false;
+                
+                // Clear all game data
+                this.bullets = [];
+                this.boulders = [];
+                this.waterGrid = [];
+                this.dustParticles = [];
+                this.impactParticles = [];
+                this.pendingSplits = [];
+                this.transitioning = false;
+                this.activePowerUp = null;
+                this.collectedPowerUps = [];
+                this.powerUps = [];
+                this.boulderPhaseStartCountdown = 0;
+                this.scaleFactor = 1.0;
+                this.tankFull = false;
+                this.showingCongrats = false;
+                
                 this.initializeGrid();
                 this.updateUI();
             }
@@ -676,18 +740,30 @@
                     const rect = this.canvas.getBoundingClientRect();
                     this.mouse.x = e.clientX - rect.left;
                     this.mouse.y = e.clientY - rect.top;
-                    this.mouse.down = true;
+                    
+                    // Only allow digging after countdown in Phase 1
+                    if (this.currentState === GAME_STATE.PHASE1 && this.phaseStarted && !this.isPaused && !this.showingCongrats) {
+                        this.mouse.down = true;
+                    } else if (this.currentState !== GAME_STATE.PHASE1) {
+                        this.mouse.down = true;
+                    }
                     
                     if (this.currentState === GAME_STATE.MENU) {
                         this.handleMenuClick();
+                    } else if (this.currentState === GAME_STATE.PHASE1) {
+                        if (this.showingCongrats) {
+                            this.handleCongratsClick();
+                        }
                     } else if (this.currentState === GAME_STATE.PHASE2) {
                         if (this.showingPowerUpSelection) {
                             this.handlePowerUpClick();
-                        } else {
+                        } else if (!this.isPaused) {
                             this.fireBullet();
                         }
                     } else if (this.currentState === GAME_STATE.GAME_OVER) {
                         this.handleGameOverClick();
+                    } else if (this.showPauseMenu) {
+                        this.handlePauseMenuClick();
                     }
                 });
 
@@ -696,7 +772,7 @@
                     this.mouse.x = e.clientX - rect.left;
                     this.mouse.y = e.clientY - rect.top;
                     
-                    if (this.mouse.down && this.currentState === GAME_STATE.PHASE1) {
+                    if (this.mouse.down && this.currentState === GAME_STATE.PHASE1 && !this.isPaused && !this.showingCongrats && this.phaseStarted) {
                         this.digTerrain();
                     }
                 });
@@ -708,6 +784,11 @@
                 // Keyboard events
                 document.addEventListener('keydown', (e) => {
                     this.keys[e.code] = true;
+                    
+                    // Handle escape key for pause
+                    if (e.key === 'Escape' && (this.currentState === GAME_STATE.PHASE1 || this.currentState === GAME_STATE.PHASE2)) {
+                        this.togglePause();
+                    }
                     
                     // Handle name input in game over screen
                     if (this.currentState === GAME_STATE.GAME_OVER && !this.gameOverNameSubmitted) {
@@ -730,6 +811,11 @@
                     if (confirm('Are you sure you want to exit to main menu?')) {
                         this.exitToMenu();
                     }
+                });
+                
+                // Pause button
+                document.getElementById('pauseButton').addEventListener('click', () => {
+                    this.togglePause();
                 });
             }
             
@@ -930,8 +1016,16 @@
                             
                             // Check if water hits tank
                             if (terrain === TERRAIN.TANK) {
-                                this.fuelLevel = Math.min(100, this.fuelLevel + water * 2); // Slower tank filling
+                                const previousLevel = this.fuelLevel;
+                                this.fuelLevel = Math.min(100, this.fuelLevel + water * 0.5); // Much slower tank filling
                                 newWaterGrid[y][x] = 0;
+                                
+                                // Check if tank just reached 100%
+                                if (!this.tankFull && this.fuelLevel >= 100) {
+                                    this.tankFull = true;
+                                    this.showingCongrats = true;
+                                    this.playSound('powerup'); // Victory sound
+                                }
                                 
                                 // Play water fill sound (more frequent)
                                 if (Math.random() < 0.2 && water > 0.1) {
@@ -1022,15 +1116,21 @@
                 this.waterGrid = [];
                 this.dustParticles = [];
                 this.waterFlowing = false;
+                this.tankFull = false;
+                this.showingCongrats = false;
                 
-                if (this.fuelLevel < 10) {
+                if (this.fuelLevel < 20) {
                     // Insufficient fuel - game over
                     this.gameOver();
                     return;
                 }
                 
-                // Reset timer for boulder phase
-                this.boulderPhaseTimer = CONFIG.BOULDER_PHASE_TIME;
+                // Reset timer for boulder phase with scaling based on difficulty
+                const boulderCount = this.calculateBoulderCount();
+                const baseTime = CONFIG.BOULDER_PHASE_TIME;
+                const extraTime = Math.max(0, (boulderCount - 5) * 3000); // 3 extra seconds per boulder over 5
+                this.boulderPhaseTimer = baseTime + extraTime;
+                this.boulderPhaseStartCountdown = 3000; // 3 second countdown
                 
                 // Show power-up selection if any were collected
                 if (this.collectedPowerUps.length > 0) {
@@ -1068,61 +1168,92 @@
                 this.updateUI();
             }
 
+            calculateBoulderCount() {
+                // Calculate boulder count for timer scaling
+                if (this.wave === 1) return 2;
+                else if (this.wave === 2) return 3;
+                else if (this.wave === 3) return 5;
+                else if (this.wave <= 5) return 6 + (this.wave - 3);
+                else if (this.wave <= 8) return 8 + (this.wave - 5);
+                else return Math.min(12 + Math.floor((this.wave - 8) * 1.5), 20);
+            }
+            
             createBoulders() {
                 this.boulders = [];
                 
-                // Progressive difficulty with CONSIDERABLY harder progression
+                // More gradual difficulty progression
                 let count, baseHP, sizeVariation;
                 
+                // Calculate scale factor based on boulder count
+                // More boulders = smaller scale to give more room
+                const boulderCount = this.calculateBoulderCount();
+                if (boulderCount <= 4) {
+                    this.scaleFactor = 1.0;
+                } else if (boulderCount <= 6) {
+                    this.scaleFactor = 0.80;
+                } else if (boulderCount <= 8) {
+                    this.scaleFactor = 0.65;
+                } else if (boulderCount <= 12) {
+                    this.scaleFactor = 0.50;
+                } else {
+                    this.scaleFactor = 0.40; // Much smaller for very hard levels
+                }
+                
+                // Update gun size based on scale
+                this.gun.width = this.baseGunWidth * this.scaleFactor;
+                this.gun.height = this.baseGunHeight * this.scaleFactor;
+                this.gun.y = 400 - this.gun.height - 5; // Adjust Y position
+                
                 if (this.wave === 1) {
-                    // Wave 1: Easy start
+                    // Wave 1: Very easy start
                     count = 2;
                     baseHP = 2;
                     sizeVariation = 0;
                 } else if (this.wave === 2) {
-                    // Wave 2: CONSIDERABLE jump in difficulty
+                    // Wave 2: Slight increase
+                    count = 3;
+                    baseHP = 3;
+                    sizeVariation = 5;
+                } else if (this.wave === 3) {
+                    // Wave 3: Moderate challenge
                     count = 5;
                     baseHP = 4;
                     sizeVariation = 10;
-                } else if (this.wave === 3) {
-                    // Wave 3: Major challenge
-                    count = 8;
-                    baseHP = 6;
-                    sizeVariation = 15;
                 } else if (this.wave <= 5) {
-                    // Waves 4-5: Very tough
-                    count = 10 + (this.wave - 3) * 2;
-                    baseHP = 8 + (this.wave - 3);
-                    sizeVariation = 20;
+                    // Waves 4-5: Gradual increase
+                    count = 6 + (this.wave - 3);
+                    baseHP = 5 + Math.floor((this.wave - 3) * 0.5);
+                    sizeVariation = 15;
                 } else if (this.wave <= 8) {
-                    // Waves 6-8: Extremely challenging
-                    count = 15 + (this.wave - 5) * 2;
-                    baseHP = 11 + (this.wave - 5);
-                    sizeVariation = 25;
+                    // Waves 6-8: Challenging but fair
+                    count = 8 + (this.wave - 5);
+                    baseHP = 6 + Math.floor((this.wave - 5) * 0.5);
+                    sizeVariation = 20;
                 } else {
-                    // Waves 9+: Nightmare difficulty with exponential scaling
-                    count = Math.min(20 + Math.floor((this.wave - 8) * 2), 30); // Max 30 boulders
-                    baseHP = 15 + Math.floor((this.wave - 8) * 1.2);
-                    sizeVariation = 30;
+                    // Waves 9+: Hard but manageable
+                    count = Math.min(12 + Math.floor((this.wave - 8) * 1.5), 20); // Max 20 boulders
+                    baseHP = 8 + Math.floor((this.wave - 8) * 0.8);
+                    sizeVariation = 25;
                 }
                 
                 // Create boulders with variety
                 for (let i = 0; i < count; i++) {
                     const sizeOffset = (Math.random() - 0.5) * sizeVariation;
-                    const radius = 25 + sizeOffset;
-                    const speed = this.wave > 1 ? 1 + (this.wave - 1) * 0.25 : 1; // Much faster progression from wave 2
+                    const baseRadius = 25 + sizeOffset;
+                    const radius = baseRadius * this.scaleFactor; // Apply scale factor
+                    const speed = this.wave > 1 ? 1 + (this.wave - 1) * 0.08 : 1; // Even more gradual speed increase
                     
                     // Special boulder types appear earlier and more frequently
                     let boulderType = 'normal';
-                    if (this.wave > 2 && Math.random() < Math.min(0.3 + this.wave * 0.08, 0.8)) {
+                    if (this.wave > 3 && Math.random() < Math.min(0.2 + this.wave * 0.05, 0.6)) {
                         boulderType = Math.random() < 0.5 ? 'armored' : 'fast';
                     }
                     
                     this.boulders.push({
                         x: 100 + (i % 5) * 140 + Math.random() * 60,
                         y: 30 + Math.floor(i / 5) * 100 + Math.random() * 40,
-                        vx: (Math.random() - 0.5) * 3 * speed,
-                        vy: Math.random() * 2,
+                        vx: (Math.random() - 0.5) * 2.5 * speed, // Slower horizontal speed
+                        vy: Math.random() * 1.5, // Slower initial vertical speed
                         radius: radius,
                         hp: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
                         maxHP: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
@@ -1139,6 +1270,12 @@
                     return;
                 }
                 
+                // Handle countdown at start of boulder phase
+                if (this.boulderPhaseStartCountdown > 0) {
+                    this.boulderPhaseStartCountdown -= 16;
+                    return; // Don't update anything else during countdown
+                }
+                
                 // Update boulder phase timer
                 this.boulderPhaseTimer -= 16; // Assuming 60fps
                 
@@ -1148,20 +1285,24 @@
                     return;
                 }
                 
-                // Update gun movement (horizontal only)
-                if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
-                    this.gun.x = Math.max(20, this.gun.x - CONFIG.GUN_SPEED);
-                }
-                if (this.keys['ArrowRight'] || this.keys['KeyD']) {
-                    this.gun.x = Math.min(760, this.gun.x + CONFIG.GUN_SPEED);
+                // Update gun movement (horizontal only) - only if not paused
+                if (!this.isPaused) {
+                    if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
+                        this.gun.x = Math.max(20, this.gun.x - CONFIG.GUN_SPEED);
+                    }
+                    if (this.keys['ArrowRight'] || this.keys['KeyD']) {
+                        this.gun.x = Math.min(800 - this.gun.width - 20, this.gun.x + CONFIG.GUN_SPEED);
+                    }
                 }
 
-                // Auto-fire system (unlimited ammo in boulder phase)
-                const now = Date.now();
-                const fireRate = this.activePowerUp?.type === 'rapidFire' ? CONFIG.AUTO_FIRE_RATE / 2 : CONFIG.AUTO_FIRE_RATE;
-                if (now - this.lastAutoFire >= fireRate) {
-                    this.fireBullet();
-                    this.lastAutoFire = now;
+                // Auto-fire system (unlimited ammo in boulder phase) - only if not paused
+                if (!this.isPaused) {
+                    const now = Date.now();
+                    const fireRate = this.activePowerUp?.type === 'rapidFire' ? CONFIG.AUTO_FIRE_RATE / 2 : CONFIG.AUTO_FIRE_RATE;
+                    if (now - this.lastAutoFire >= fireRate) {
+                        this.fireBullet();
+                        this.lastAutoFire = now;
+                    }
                 }
 
                 // Update visual effects
@@ -1243,7 +1384,7 @@
                             other.x += separateX;
                             other.y += separateY;
                             
-                            // Exchange velocities with energy conservation
+                            // Exchange velocities with energy conservation and damping
                             const normalX = dx / distance;
                             const normalY = dy / distance;
                             const relativeVelX = other.vx - boulder.vx;
@@ -1252,30 +1393,47 @@
                             
                             if (speed < 0) continue; // Objects separating
                             
-                            boulder.vx += speed * normalX * 0.8;
-                            boulder.vy += speed * normalY * 0.8;
-                            other.vx -= speed * normalX * 0.8;
-                            other.vy -= speed * normalY * 0.8;
+                            // Apply collision with damping to prevent crazy bouncing
+                            const dampingFactor = 0.5; // Reduce energy transfer
+                            boulder.vx += speed * normalX * dampingFactor;
+                            boulder.vy += speed * normalY * dampingFactor;
+                            other.vx -= speed * normalX * dampingFactor;
+                            other.vy -= speed * normalY * dampingFactor;
+                            
+                            // Apply velocity limits to prevent crazy speeds
+                            const maxSpeed = 8;
+                            boulder.vx = Math.max(-maxSpeed, Math.min(maxSpeed, boulder.vx));
+                            boulder.vy = Math.max(-maxSpeed, Math.min(maxSpeed, boulder.vy));
+                            other.vx = Math.max(-maxSpeed, Math.min(maxSpeed, other.vx));
+                            other.vy = Math.max(-maxSpeed, Math.min(maxSpeed, other.vy));
                         }
                     }
                     
-                    // Bounce off walls with variation and much higher energy
+                    // Bounce off walls with variation and controlled energy
                     if (boulder.x <= boulder.radius || boulder.x >= 800 - boulder.radius) {
-                        boulder.vx *= -(0.98 + Math.random() * 0.04); // Much higher energy conservation
-                        boulder.vx += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION;
+                        boulder.vx *= -(0.7 + Math.random() * 0.1); // Less energy conservation to prevent crazy bouncing
+                        boulder.vx += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION * 0.5;
                         boulder.x = Math.max(boulder.radius, Math.min(800 - boulder.radius, boulder.x));
-                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY * 0.5;
+                        
+                        // Velocity limit
+                        const maxSpeed = 8;
+                        boulder.vx = Math.max(-maxSpeed, Math.min(maxSpeed, boulder.vx));
                     }
                     
                     if (boulder.y <= boulder.radius) {
-                        boulder.vy *= -(0.98 + Math.random() * 0.04); // Much higher energy conservation
-                        boulder.vy += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION;
+                        // Stop at ceiling and fall down (no bounce)
                         boulder.y = boulder.radius;
-                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                        boulder.vy = 1; // Small downward velocity to start falling
+                        // No camera shake for ceiling stop
                     }
                     
-                    // Gravity
-                    boulder.vy += 0.25;
+                    // Gravity with terminal velocity
+                    boulder.vy += 0.2; // Slightly less gravity
+                    
+                    // Terminal velocity to prevent infinite acceleration
+                    const terminalVelocity = 12;
+                    boulder.vy = Math.min(terminalVelocity, boulder.vy);
                     
                     // Check gun collision (immediate game over)
                     if (boulder.y + boulder.radius >= this.gun.y &&
@@ -1285,13 +1443,17 @@
                         return;
                     }
                     
-                    // Bounce off bottom with minimum height preservation and much higher energy
+                    // Bounce off bottom with minimum height preservation and controlled energy
                     if (boulder.y >= 400 - boulder.radius) {
                         boulder.y = 400 - boulder.radius;
-                        const bounceVel = Math.abs(boulder.vy * 0.96); // Much higher energy conservation
+                        const bounceVel = Math.abs(boulder.vy * 0.85); // More energy conservation for higher bounces
                         boulder.vy = -Math.max(bounceVel, CONFIG.MIN_BOUNCE_HEIGHT);
                         boulder.vy += (Math.random() - 0.5) * CONFIG.BOUNCE_VARIATION;
-                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY;
+                        this.cameraShake.intensity = CONFIG.CAMERA_SHAKE_INTENSITY * 0.7;
+                        
+                        // Velocity limit - allow higher upward velocity for big bounces
+                        const maxUpwardSpeed = 16;
+                        boulder.vy = Math.max(-maxUpwardSpeed, boulder.vy); // Allow high upward velocity
                     }
                 }
                 
@@ -1389,14 +1551,14 @@
                         if (!this.pendingSplits) this.pendingSplits = [];
                         
                         const newSize = boulder.size - 1;
-                        const newRadius = boulder.radius * 0.7;
+                                                    const newRadius = boulder.radius * 0.7; // Already scaled
                         
                         for (let i = 0; i < 2; i++) {
                             this.pendingSplits.push({
-                                x: boulder.x + (i - 0.5) * 25,
+                                x: boulder.x + (i - 0.5) * 20,
                                 y: boulder.y,
-                                vx: (i - 0.5) * (4 + Math.random() * 4),
-                                vy: -2 - Math.random() * 3,
+                                vx: (i - 0.5) * (3 + Math.random() * 2), // Moderate split velocity
+                                vy: -6 - Math.random() * 3, // Good upward velocity for split bouncing
                                 hp: Math.ceil(boulder.maxHP * 0.6),
                                 maxHP: Math.ceil(boulder.maxHP * 0.6),
                                 size: newSize,
@@ -1417,13 +1579,14 @@
                 
                 for (let i = 0; i < spread; i++) {
                     const angle = spread > 1 ? (i - 1) * 0.15 : 0; // Spread angle
-                    this.bullets.push({
-                        x: this.gun.x + this.gun.width / 2,
-                        y: this.gun.y,
-                        vx: Math.sin(angle) * 3,
-                        vy: -CONFIG.BULLET_SPEED,
-                        damage: damage
-                    });
+                                            this.bullets.push({
+                            x: this.gun.x + this.gun.width / 2,
+                            y: this.gun.y,
+                            vx: Math.sin(angle) * 3,
+                            vy: -CONFIG.BULLET_SPEED,
+                            damage: damage,
+                            radius: 4 * this.scaleFactor // Scale bullet size too
+                        });
                 }
                 
                 // Play shooting sound
@@ -1470,6 +1633,9 @@
                 this.showInstructions = false;
                 this.showCustomization = false;
                 this.showLeaderboard = false;
+                this.isPaused = false;
+                this.showPauseMenu = false;
+                this.showPauseInstructions = false;
                 
                 // Clear all game data
                 this.bullets = [];
@@ -1483,6 +1649,15 @@
                 this.activePowerUp = null;
                 this.collectedPowerUps = [];
                 this.powerUps = [];
+                this.boulderPhaseStartCountdown = 0;
+                this.tankFull = false;
+                this.showingCongrats = false;
+                
+                // Reset pause button text
+                const pauseButton = document.getElementById('pauseButton');
+                if (pauseButton) {
+                    pauseButton.textContent = 'Pause';
+                }
             }
             
             gameOver() {
@@ -1527,6 +1702,9 @@
                 this.activePowerUp = null;
                 this.collectedPowerUps = [];
                 this.powerUps = [];
+                this.boulderPhaseStartCountdown = 0;
+                this.tankFull = false;
+                this.showingCongrats = false;
             }
             
             loadLeaderboard() {
@@ -1557,13 +1735,16 @@
                 // Hide/show UI based on game state
                 const gameUI = document.querySelector('.ui');
                 const exitButton = document.getElementById('exitButton');
+                const pauseButton = document.getElementById('pauseButton');
                 
                 if (this.currentState === GAME_STATE.MENU) {
                     if (gameUI) gameUI.style.display = 'none';
                     if (exitButton) exitButton.style.display = 'none';
+                    if (pauseButton) pauseButton.style.display = 'none';
                 } else {
                     if (gameUI) gameUI.style.display = 'block';
                     if (exitButton) exitButton.style.display = 'block';
+                    if (pauseButton) pauseButton.style.display = 'block';
                     
                     document.getElementById('waveCount').textContent = this.wave;
                     document.getElementById('score').textContent = this.score;
@@ -1606,8 +1787,20 @@
                         timerFill.style.width = timerPercent + '%';
                         document.getElementById('ammoCount').textContent = Math.floor(this.fuelLevel) + '%';
                     } else {
-                        phaseIndicator.textContent = 'PHASE 2: DESTROY BOULDERS';
-                        const timerPercent = (this.boulderPhaseTimer / CONFIG.BOULDER_PHASE_TIME) * 100;
+                        let phaseText = 'PHASE 2: DESTROY BOULDERS';
+                        // Add scale indicator if needed
+                        if (this.scaleFactor < 1.0) {
+                            const scalePercent = Math.round(this.scaleFactor * 100);
+                            phaseText += ` | 🔍 Scale: ${scalePercent}%`;
+                        }
+                        phaseIndicator.textContent = phaseText;
+                        
+                        // Calculate total time for this wave for accurate percentage
+                        const boulderCount = this.calculateBoulderCount();
+                        const baseTime = CONFIG.BOULDER_PHASE_TIME;
+                        const extraTime = Math.max(0, (boulderCount - 5) * 3000);
+                        const totalTime = baseTime + extraTime;
+                        const timerPercent = (this.boulderPhaseTimer / totalTime) * 100;
                         timerFill.style.width = timerPercent + '%';
                         document.getElementById('ammoCount').textContent = 'UNLIMITED';
                     }
@@ -1678,9 +1871,19 @@
                 
                 this.ctx.restore();
                 
-                // Render power-up selection UI if showing
+                // Render power-up selection UI if showing (this should be last to cover everything)
                 if (this.showingPowerUpSelection) {
                     this.renderPowerUpSelection();
+                }
+                
+                // Render congratulations screen if showing
+                if (this.showingCongrats) {
+                    this.renderCongratulations();
+                }
+                
+                // Render pause menu if showing
+                if (this.showPauseMenu) {
+                    this.renderPauseMenu();
                 }
             }
             
@@ -1961,8 +2164,8 @@
             }
             
             renderPowerUpSelection() {
-                // Darken background
-                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                // Completely cover background to hide boulder phase
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
                 this.ctx.fillRect(0, 0, 800, 400);
                 
                 // Title
@@ -2048,6 +2251,201 @@
                 this.ctx.fillStyle = '#FFFFFF';
                 this.ctx.textAlign = 'center';
                 this.ctx.fillText('Skip Power-Up', centerX, skipY + 25);
+            }
+            
+            handleCongratsClick() {
+                // Check if "Next" button was clicked
+                const centerX = 400;
+                const buttonY = 260;
+                
+                if (this.mouse.x > centerX - 80 && this.mouse.x < centerX + 80 &&
+                    this.mouse.y > buttonY && this.mouse.y < buttonY + 40) {
+                    // Skip to phase 2
+                    this.showingCongrats = false;
+                    this.transitionToPhase2();
+                }
+            }
+            
+            renderCongratulations() {
+                // Darken background
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                // Success message
+                this.ctx.font = 'bold 36px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillStyle = '#00FF00';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 3;
+                this.ctx.strokeText('CONGRATULATIONS!', 400, 120);
+                this.ctx.fillText('CONGRATULATIONS!', 400, 120);
+                
+                // Sub message
+                this.ctx.font = '24px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText('You filled the tank before time ran out!', 400, 170);
+                
+                // Bonus info
+                this.ctx.font = '20px Arial';
+                this.ctx.fillStyle = '#FFD700';
+                this.ctx.fillText('Tank filled: 100%', 400, 210);
+                
+                // Next button
+                this.ctx.fillStyle = '#4CAF50';
+                this.ctx.fillRect(320, 260, 160, 40);
+                this.ctx.strokeStyle = '#2E7D32';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(320, 260, 160, 40);
+                
+                this.ctx.font = 'bold 20px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.fillText('NEXT', 400, 285);
+            }
+            
+            togglePause() {
+                if (this.currentState === GAME_STATE.PHASE1 || this.currentState === GAME_STATE.PHASE2) {
+                    this.isPaused = !this.isPaused;
+                    this.showPauseMenu = this.isPaused;
+                    
+                    const pauseButton = document.getElementById('pauseButton');
+                    if (pauseButton) {
+                        pauseButton.textContent = this.isPaused ? 'Resume' : 'Pause';
+                    }
+                }
+            }
+            
+            handlePauseMenuClick() {
+                const centerX = 400;
+                const buttonWidth = 200;
+                const buttonHeight = 40;
+                const baseY = 150;
+                const spacing = 50;
+                
+                // Resume button
+                if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
+                    this.mouse.y > baseY && this.mouse.y < baseY + buttonHeight) {
+                    this.togglePause();
+                }
+                
+                // Instructions button
+                else if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
+                         this.mouse.y > baseY + spacing && this.mouse.y < baseY + spacing + buttonHeight) {
+                    // Show instructions without unpausing
+                    this.showPauseInstructions = true;
+                }
+                
+                // Restart button
+                else if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
+                         this.mouse.y > baseY + spacing * 2 && this.mouse.y < baseY + spacing * 2 + buttonHeight) {
+                    if (confirm('Are you sure you want to restart? Current progress will be lost.')) {
+                        this.isPaused = false;
+                        this.showPauseMenu = false;
+                        this.exitToMenu();
+                        this.startGame(); // Restart game from wave 1
+                    }
+                }
+                
+                // Back from instructions
+                if (this.showPauseInstructions) {
+                    if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
+                        this.mouse.y > 340 && this.mouse.y < 380) {
+                        this.showPauseInstructions = false;
+                    }
+                }
+            }
+            
+            renderPauseMenu() {
+                // Dark overlay
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                if (this.showPauseInstructions) {
+                    // Show instructions
+                    this.ctx.font = 'bold 28px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('GAME INSTRUCTIONS', 400, 80);
+                    
+                    this.ctx.font = '18px Arial';
+                    this.ctx.textAlign = 'left';
+                    const instructions = [
+                        'PHASE 1 - FUEL COLLECTION:',
+                        '• Click and drag to dig tunnels',
+                        '• Guide water to fill the tank (20% minimum)',
+                        '• Fill to 100% to skip timer',
+                        '• Collect power-up diamonds',
+                        '',
+                        'PHASE 2 - BOULDER DESTRUCTION:',
+                        '• Use A/D or ←/→ to move gun',
+                        '• Auto-fire destroys boulders',
+                        '• Larger boulders split when destroyed',
+                        '• Clear all boulders before time runs out',
+                        '',
+                        'Press ESC to pause anytime'
+                    ];
+                    
+                    let y = 120;
+                    for (const line of instructions) {
+                        this.ctx.fillText(line, 100, y);
+                        y += 22;
+                    }
+                    
+                    // Back button
+                    this.ctx.fillStyle = '#2196F3';
+                    this.ctx.fillRect(340, 340, 120, 40);
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(340, 340, 120, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('BACK', 400, 365);
+                } else {
+                    // Pause menu
+                    this.ctx.font = 'bold 48px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('PAUSED', 400, 80);
+                    
+                    const centerX = 400;
+                    const buttonWidth = 200;
+                    const buttonHeight = 40;
+                    const baseY = 150;
+                    const spacing = 50;
+                    
+                    // Resume button
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(centerX - buttonWidth/2, baseY, buttonWidth, buttonHeight);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(centerX - buttonWidth/2, baseY, buttonWidth, buttonHeight);
+                    
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('RESUME', centerX, baseY + 27);
+                    
+                    // Instructions button
+                    this.ctx.fillStyle = '#2196F3';
+                    this.ctx.fillRect(centerX - buttonWidth/2, baseY + spacing, buttonWidth, buttonHeight);
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.strokeRect(centerX - buttonWidth/2, baseY + spacing, buttonWidth, buttonHeight);
+                    
+                    this.ctx.fillText('INSTRUCTIONS', centerX, baseY + spacing + 27);
+                    
+                    // Restart button
+                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillRect(centerX - buttonWidth/2, baseY + spacing * 2, buttonWidth, buttonHeight);
+                    this.ctx.strokeStyle = '#D84315';
+                    this.ctx.strokeRect(centerX - buttonWidth/2, baseY + spacing * 2, buttonWidth, buttonHeight);
+                    
+                    this.ctx.fillText('RESTART', centerX, baseY + spacing * 2 + 27);
+                    
+                    // Tip
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#CCCCCC';
+                    this.ctx.fillText('Press ESC to resume', centerX, 320);
+                }
             }
             
             adjustColor(color, brightness) {
@@ -2463,27 +2861,37 @@
                     this.ctx.textAlign = 'center';
                     this.ctx.textBaseline = 'middle';
                     
-                    const seconds = Math.ceil(this.countdownTimer / 1000);
-                    if (seconds > 0) {
-                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                        this.ctx.fillRect(0, 0, 800, 400);
-                        
-                        this.ctx.fillStyle = '#FFFFFF';
-                        this.ctx.strokeStyle = '#000000';
-                        this.ctx.lineWidth = 4;
-                        const text = seconds.toString();
-                        this.ctx.strokeText(text, 400, 200);
-                        this.ctx.fillText(text, 400, 200);
-                    } else {
-                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                        this.ctx.fillRect(0, 0, 800, 400);
-                        
-                        this.ctx.fillStyle = '#00FF00';
-                        this.ctx.strokeStyle = '#000000';
-                        this.ctx.lineWidth = 4;
-                        this.ctx.strokeText('GO!', 400, 200);
-                        this.ctx.fillText('GO!', 400, 200);
-                    }
+                                            const seconds = Math.ceil(this.countdownTimer / 1000);
+                        if (seconds > 0) {
+                            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                            this.ctx.fillRect(0, 0, 800, 400);
+                            
+                            // Countdown number
+                            this.ctx.fillStyle = '#FFFFFF';
+                            this.ctx.strokeStyle = '#000000';
+                            this.ctx.lineWidth = 4;
+                            const text = seconds.toString();
+                            this.ctx.strokeText(text, 400, 200);
+                            this.ctx.fillText(text, 400, 200);
+                            
+                            // Instructions
+                            this.ctx.font = '24px Arial';
+                            this.ctx.fillStyle = '#FFD700';
+                            this.ctx.strokeStyle = '#000000';
+                            this.ctx.lineWidth = 2;
+                            const instruction = 'Fill the tank with fuel (at least 20%)!';
+                            this.ctx.strokeText(instruction, 400, 280);
+                            this.ctx.fillText(instruction, 400, 280);
+                        } else {
+                            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                            this.ctx.fillRect(0, 0, 800, 400);
+                            
+                            this.ctx.fillStyle = '#00FF00';
+                            this.ctx.strokeStyle = '#000000';
+                            this.ctx.lineWidth = 4;
+                            this.ctx.strokeText('GO!', 400, 200);
+                            this.ctx.fillText('GO!', 400, 200);
+                        }
                     this.ctx.restore();
                 }
                 
@@ -2627,6 +3035,64 @@
             }
 
             renderPhase2() {
+                // Don't render anything if power-up selection is showing
+                if (this.showingPowerUpSelection) {
+                    return;
+                }
+                
+                // Render countdown if active
+                if (this.boulderPhaseStartCountdown > 0) {
+                    // Darken background
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    this.ctx.fillRect(0, 0, 800, 400);
+                    
+                    this.ctx.font = 'bold 72px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    
+                    const seconds = Math.ceil(this.boulderPhaseStartCountdown / 1000);
+                    if (seconds > 0) {
+                        // Countdown number
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        const text = seconds.toString();
+                        this.ctx.strokeText(text, 400, 200);
+                        this.ctx.fillText(text, 400, 200);
+                        
+                        // Instructions
+                        this.ctx.font = '24px Arial';
+                        this.ctx.fillStyle = '#FF6B6B';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 2;
+                        const instruction = 'Destroy ALL boulders before time runs out!';
+                        this.ctx.strokeText(instruction, 400, 280);
+                        this.ctx.fillText(instruction, 400, 280);
+                        
+                        // Boulder count and scale info
+                        this.ctx.font = '20px Arial';
+                        this.ctx.fillStyle = '#FFD700';
+                        const boulderInfo = `${this.boulders.length} boulders incoming!`;
+                        this.ctx.strokeText(boulderInfo, 400, 320);
+                        this.ctx.fillText(boulderInfo, 400, 320);
+                        
+                        // Scale indicator
+                        if (this.scaleFactor < 1.0) {
+                            this.ctx.font = '16px Arial';
+                            this.ctx.fillStyle = '#00CED1';
+                            const scaleInfo = `Arena scaled to ${Math.round(this.scaleFactor * 100)}% for more space`;
+                            this.ctx.strokeText(scaleInfo, 400, 350);
+                            this.ctx.fillText(scaleInfo, 400, 350);
+                        }
+                    } else {
+                        this.ctx.fillStyle = '#00FF00';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        this.ctx.strokeText('GO!', 400, 200);
+                        this.ctx.fillText('GO!', 400, 200);
+                    }
+                    return; // Don't render game elements during countdown
+                }
                 // Render impact particles with enhanced effects
                 for (const particle of this.impactParticles) {
                     const alpha = particle.life / particle.maxLife;
@@ -2775,7 +3241,7 @@
                     // Bullet
                     this.ctx.fillStyle = '#FFD700';
                     this.ctx.beginPath();
-                    this.ctx.arc(bullet.x, bullet.y, 4, 0, Math.PI * 2);
+                    this.ctx.arc(bullet.x, bullet.y, bullet.radius || 4, 0, Math.PI * 2);
                     this.ctx.fill();
                 }
                 
@@ -2872,11 +3338,15 @@
 
             gameLoop() {
                 // Update game logic
-                if (this.currentState === GAME_STATE.PHASE1) {
-                    this.updatePhase1();
-                } else if (this.currentState === GAME_STATE.PHASE2) {
-                    if (!this.showingPowerUpSelection) {
-                        this.updatePhase2();
+                if (!this.isPaused) {
+                    if (this.currentState === GAME_STATE.PHASE1) {
+                        if (!this.showingCongrats) {
+                            this.updatePhase1();
+                        }
+                    } else if (this.currentState === GAME_STATE.PHASE2) {
+                        if (!this.showingPowerUpSelection) {
+                            this.updatePhase2();
+                        }
                     }
                 }
                 
