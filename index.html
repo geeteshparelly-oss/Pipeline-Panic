@@ -429,7 +429,7 @@
             }
 
             startGame() {
-                this.currentState = GAME_STATE.PHASE1;
+                this.currentState = GAME_STATE.MENU; // Stay in menu state during wave screen
                 this.wave = 1;
                 this.score = 0;
                 this.fuelLevel = 0;
@@ -449,8 +449,8 @@
                 // Clear game over state
                 this.gameOverName = '';
                 this.gameOverNameSubmitted = false;
-                this.showingWaveScreen = false;
-                this.waveScreenTimer = 0;
+                this.showingWaveScreen = true;  // Show wave screen
+                this.waveScreenTimer = 2000;    // Show for 2 seconds
                 
                 // Clear all game data
                 this.bullets = [];
@@ -469,8 +469,7 @@
                 this.tankFull = false;
                 this.showingCongrats = false;
                 
-                this.initializeGrid();
-                this.updateUI();
+                // Grid initialization will happen after wave screen in startNextWavePhase
             }
 
             initializeGrid() {
@@ -654,39 +653,41 @@
                     this.addZigzagPath(1);
                     this.addStoneChunks(2 + Math.floor(this.wave / 2));
                 } else if (this.wave <= 6) {
-                    // Waves 5-6: Complex routing puzzles
-                    this.addPathBlockers(2);
-                    this.addLShapedWalls(2);
-                    this.addFloatingPlatforms(1);
-                    this.addFakePaths(2);
-                    this.addZigzagPath(2);
+                    // Waves 5-6: Much harder - Complex routing puzzles
+                    this.addPathBlockers(3); // Increased from 2
+                    this.addLShapedWalls(3); // Increased from 2
+                    this.addFloatingPlatforms(2); // Increased from 1
+                    this.addFakePaths(3); // Increased from 2
+                    this.addZigzagPath(3); // Increased from 2
                     this.addUTurnPuzzle();
                     this.addOneWayValves();
-                    this.addStoneChunks(4 + this.wave);
+                    this.addMazeSection(1); // Added maze section
+                    this.addStoneChunks(6 + this.wave); // Increased from 4
                 } else if (this.wave <= 8) {
-                    // Waves 7-8: Advanced puzzles
-                    this.addPathBlockers(3);
-                    this.addLShapedWalls(2);
-                    this.addFloatingPlatforms(2);
-                    this.addMazeSection(1);
-                    this.addFakePaths(2);
+                    // Waves 7-8: Advanced puzzles - even harder
+                    this.addPathBlockers(4); // Increased from 3
+                    this.addLShapedWalls(3); // Increased from 2
+                    this.addFloatingPlatforms(3); // Increased from 2
+                    this.addMazeSection(2); // Increased from 1
+                    this.addFakePaths(3); // Increased from 2
                     this.addSpiralPuzzle();
-                    this.addZigzagPath(2);
+                    this.addZigzagPath(3); // Increased from 2
                     this.addWaterReservoirs();
-                    this.addStoneChunks(6 + this.wave);
+                    this.addUTurnPuzzle(); // Added U-turn
+                    this.addStoneChunks(8 + this.wave); // Increased from 6
                 } else {
                     // Waves 9+: Maximum complexity with intricate puzzles
-                    this.addPathBlockers(3);
-                    this.addLShapedWalls(3);
-                    this.addFloatingPlatforms(2);
-                    this.addMazeSection(Math.min(this.wave - 8, 3));
-                    this.addFakePaths(3);
+                    this.addPathBlockers(4); // Increased from 3
+                    this.addLShapedWalls(4); // Increased from 3
+                    this.addFloatingPlatforms(3); // Increased from 2
+                    this.addMazeSection(Math.min(this.wave - 8, 4)); // Increased max from 3
+                    this.addFakePaths(4); // Increased from 3
                     this.addSpiralPuzzle();
                     this.addUTurnPuzzle();
                     this.addMultiLevelPuzzle();
                     this.addOneWayValves();
                     this.addWaterReservoirs();
-                    this.addStoneChunks(8 + this.wave);
+                    this.addStoneChunks(10 + this.wave); // Increased from 8
                 }
             }
             
@@ -1279,7 +1280,7 @@
             
             handleMenuClick() {
                 const centerX = 400;
-                const centerY = 200;
+                const centerY = 160; // Updated to match new button positions
                 
                 if (!this.showInstructions && !this.showCustomization && !this.showLeaderboard) {
                     // Check play button
@@ -1296,6 +1297,11 @@
                     else if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
                              this.mouse.y > centerY + 100 && this.mouse.y < centerY + 140) {
                         this.showCustomization = true;
+                    }
+                    // Check leaderboard button
+                    else if (this.mouse.x > centerX - 100 && this.mouse.x < centerX + 100 &&
+                             this.mouse.y > centerY + 160 && this.mouse.y < centerY + 200) {
+                        this.showLeaderboard = true;
                     }
                 } else if (this.showInstructions) {
                     // Back button from instructions
@@ -1448,9 +1454,14 @@
                     for (let i = 0; i < CONFIG.TAP_WIDTH; i++) {
                         const x = tapX - Math.floor(CONFIG.TAP_WIDTH/2) + i;
                         if (x >= 0 && x < CONFIG.GRID_WIDTH && tapY < CONFIG.GRID_HEIGHT) {
+                            // Make water flow faster in higher waves to compensate for harder puzzles
+                            let flowRate = CONFIG.WATER_FLOW_RATE;
+                            if (this.wave >= 5) {
+                                flowRate = CONFIG.WATER_FLOW_RATE * 1.2; // 20% faster water flow from wave 5+
+                            }
                             this.waterGrid[tapY][x] = Math.min(
                                 CONFIG.MAX_WATER_PER_CELL,
-                                this.waterGrid[tapY][x] + CONFIG.WATER_FLOW_RATE
+                                this.waterGrid[tapY][x] + flowRate
                             );
                         }
                     }
@@ -1701,19 +1712,19 @@
                 // More gradual difficulty progression
                 let count, baseHP, sizeVariation;
                 
-                // Calculate scale factor based on wave for more room
+                // Calculate scale factor based on wave for more room - more aggressive zoom out
                 if (this.wave <= 3) {
                     this.scaleFactor = 1.0; // Normal size
                 } else if (this.wave <= 4) {
-                    this.scaleFactor = 0.7;
+                    this.scaleFactor = 0.65;
                 } else if (this.wave <= 5) {
-                    this.scaleFactor = 0.55;
+                    this.scaleFactor = 0.5;
                 } else if (this.wave <= 6) {
-                    this.scaleFactor = 0.45;
+                    this.scaleFactor = 0.4;
                 } else if (this.wave <= 8) {
-                    this.scaleFactor = 0.35;
+                    this.scaleFactor = 0.3;
                 } else {
-                    this.scaleFactor = 0.3; // Minimum 30% size for waves 9+
+                    this.scaleFactor = 0.25; // Minimum 25% size for waves 9+
                 }
                 
                 // Update gun size based on scale
@@ -1758,7 +1769,14 @@
                     const sizeOffset = (Math.random() - 0.5) * sizeVariation;
                     const baseRadius = 25 + sizeOffset;
                     const radius = baseRadius * this.scaleFactor; // Apply scale factor
-                    const speed = this.wave > 1 ? 1 + (this.wave - 1) * 0.08 : 1; // Even more gradual speed increase
+                    // Make boulders slower from wave 5 onwards
+                    let speed;
+                    if (this.wave <= 4) {
+                        speed = this.wave > 1 ? 1 + (this.wave - 1) * 0.08 : 1;
+                    } else {
+                        // Wave 5+: slower speed progression
+                        speed = 1.24 + (this.wave - 5) * 0.04; // Much slower increase
+                    }
                     
                     // Special boulder types appear earlier and more frequently
                     let boulderType = 'normal';
@@ -1769,7 +1787,7 @@
                     this.boulders.push({
                         x: 100 + (i % 5) * 140 + Math.random() * 60,
                         y: -100 - Math.floor(i / 5) * 80 - Math.random() * 50, // Start above screen
-                        vx: (Math.random() - 0.5) * 1.5 * speed, // Even slower horizontal speed
+                        vx: (Math.random() - 0.5) * 1.0 * speed, // Reduced horizontal speed
                         vy: 0, // No initial downward velocity - gravity will handle it
                         radius: radius,
                         hp: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
@@ -2164,6 +2182,12 @@
                 this.showingWaveScreen = false;
                 this.waveScreenTimer = 0;
                 
+                // Initialize grid for wave 1 if needed
+                if (this.wave === 1) {
+                    this.initializeGrid();
+                    this.updateUI();
+                }
+                
                 // Debug: Log wave transition
                 console.log('Started Wave:', this.wave, 'Phase 1');
             }
@@ -2406,14 +2430,17 @@
                     }
                 }
 
-                if (this.currentState === GAME_STATE.MENU) {
-                    this.renderMenu();
-                } else if (this.currentState === GAME_STATE.PHASE1) {
-                    this.renderPhase1();
-                } else if (this.currentState === GAME_STATE.PHASE2) {
-                    this.renderPhase2();
-                } else if (this.currentState === GAME_STATE.GAME_OVER) {
-                    this.renderGameOver();
+                // Only render game states if not showing wave screen
+                if (!this.showingWaveScreen) {
+                    if (this.currentState === GAME_STATE.MENU) {
+                        this.renderMenu();
+                    } else if (this.currentState === GAME_STATE.PHASE1) {
+                        this.renderPhase1();
+                    } else if (this.currentState === GAME_STATE.PHASE2) {
+                        this.renderPhase2();
+                    } else if (this.currentState === GAME_STATE.GAME_OVER) {
+                        this.renderGameOver();
+                    }
                 }
                 
                 this.ctx.restore();
@@ -2444,7 +2471,7 @@
                 this.renderMenuBackground();
                 
                 const centerX = 400;
-                const centerY = 200;
+                const centerY = 160; // Moved buttons higher
                 
                 if (!this.showInstructions && !this.showCustomization && !this.showLeaderboard) {
                     // Title
@@ -2454,14 +2481,14 @@
                     
                     // Title shadow
                     this.ctx.fillStyle = '#000000';
-                    this.ctx.fillText('PIPELINE PANIC', centerX + 4, 80 + 4);
+                    this.ctx.fillText('PIPELINE PANIC', centerX + 4, 60 + 4);
                     
                     // Title main
-                    const titleGradient = this.ctx.createLinearGradient(0, 40, 0, 120);
+                    const titleGradient = this.ctx.createLinearGradient(0, 20, 0, 100);
                     titleGradient.addColorStop(0, '#FF6B6B');
                     titleGradient.addColorStop(1, '#C44444');
                     this.ctx.fillStyle = titleGradient;
-                    this.ctx.fillText('PIPELINE PANIC', centerX, 80);
+                    this.ctx.fillText('PIPELINE PANIC', centerX, 60);
                     
                     // Play button
                     this.ctx.fillStyle = '#4CAF50';
@@ -2485,7 +2512,6 @@
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillText('INSTRUCTIONS', centerX, centerY + 60);
                     
-                    // High score display
                     // Customization button
                     this.ctx.fillStyle = '#9C27B0';
                     this.ctx.fillRect(centerX - 100, centerY + 100, 200, 40);
@@ -2497,51 +2523,117 @@
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillText('CUSTOMIZE', centerX, centerY + 120);
                     
-                    // High score display
-                    this.ctx.font = '20px Arial';
-                    this.ctx.fillStyle = '#333333';
-                    this.ctx.fillText('High Score: ' + (localStorage.getItem('highScore') || 0), centerX, centerY + 170);
+                    // Leaderboard button
+                    this.ctx.fillStyle = '#FF9800';
+                    this.ctx.fillRect(centerX - 100, centerY + 160, 200, 40);
+                    this.ctx.strokeStyle = '#E65100';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(centerX - 100, centerY + 160, 200, 40);
+                    
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('LEADERBOARD', centerX, centerY + 180);
+                    
+                    // High score display box in bottom left
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    this.ctx.fillRect(20, 340, 180, 40);
+                    this.ctx.strokeStyle = '#FFD700';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(20, 340, 180, 40);
+                    
+                    this.ctx.font = '18px Arial';
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('High Score: ' + (localStorage.getItem('highScore') || 0), 110, 365);
                     
                     // Display selected skin preview on the right
+                    this.ctx.textAlign = 'center'; // Reset alignment for skin preview
                     this.renderSkinPreview(600, 180);
                     
                 } else if (this.showInstructions) {
-                    // Instructions screen
-                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-                    this.ctx.fillRect(50, 50, 700, 300);
+                    // Instructions screen with dark background
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                    this.ctx.fillRect(0, 0, 800, 400);
                     
+                    // Title
                     this.ctx.font = 'bold 36px Arial';
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.textAlign = 'center';
-                    this.ctx.fillText('HOW TO PLAY', centerX, 90);
+                    this.ctx.fillText('HOW TO PLAY', centerX, 50);
                     
-                    this.ctx.font = '18px Arial';
+                    // Phase 1 Box (Left)
+                    this.ctx.fillStyle = 'rgba(76, 175, 80, 0.2)';
+                    this.ctx.fillRect(50, 80, 320, 240);
+                    this.ctx.strokeStyle = '#4CAF50';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(50, 80, 320, 240);
+                    
+                    // Phase 1 Title
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('PHASE 1: FUEL COLLECTION', 210, 110);
+                    
+                    // Phase 1 Instructions
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.textAlign = 'left';
-                    const instructions = [
-                        'PHASE 1 - FUEL COLLECTION:',
-                        '• Click and drag to dig tunnels through the dirt',
-                        '• Guide water from tap to tank below',
-                        '• Fill tank to at least 20% (100% to skip timer)',
-                        '• Collect power-up diamonds for Phase 2 boosts',
-                        '',
-                        'PHASE 2 - BOULDER DESTRUCTION:',
-                        '• Use A/D or ←/→ keys to move your cannon',
-                        '• Auto-fire shoots at bouncing boulders',
-                        '• Destroy all boulders before time runs out',
-                        '• Larger boulders split when destroyed!'
+                    const phase1Instructions = [
+                        '• Click and drag to dig tunnels',
+                        '  through the dirt',
+                        '• Guide water from tap to tank',
+                        '• Fill tank to at least 20%',
+                        '  (100% to skip timer)',
+                        '• Collect power-up diamonds',
+                        '  for Phase 2 boosts',
+                        '• Watch out for obstacles!'
                     ];
                     
-                    let y = 130;
-                    for (const line of instructions) {
-                        this.ctx.fillText(line, 80, y);
+                    let y = 140;
+                    for (const line of phase1Instructions) {
+                        this.ctx.fillText(line, 70, y);
+                        y += 22;
+                    }
+                    
+                    // Phase 2 Box (Right)
+                    this.ctx.fillStyle = 'rgba(255, 152, 0, 0.2)';
+                    this.ctx.fillRect(430, 80, 320, 240);
+                    this.ctx.strokeStyle = '#FF9800';
+                    this.ctx.lineWidth = 3;
+                    this.ctx.strokeRect(430, 80, 320, 240);
+                    
+                    // Phase 2 Title
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FF9800';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('PHASE 2: BOULDER BATTLE', 590, 110);
+                    
+                    // Phase 2 Instructions
+                    this.ctx.font = '16px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.textAlign = 'left';
+                    const phase2Instructions = [
+                        '• Use A/D or ←/→ keys to',
+                        '  move your cannon',
+                        '• Auto-fire shoots at',
+                        '  bouncing boulders',
+                        '• Destroy all boulders before',
+                        '  time runs out!',
+                        '• Larger boulders split when',
+                        '  destroyed into smaller ones'
+                    ];
+                    
+                    y = 140;
+                    for (const line of phase2Instructions) {
+                        this.ctx.fillText(line, 450, y);
                         y += 22;
                     }
                     
                     // Back button
-                    this.ctx.fillStyle = '#FF5722';
+                    this.ctx.fillStyle = '#2196F3';
                     this.ctx.fillRect(centerX - 50, 340, 100, 40);
-                    this.ctx.strokeStyle = '#D84315';
-                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.lineWidth = 3;
                     this.ctx.strokeRect(centerX - 50, 340, 100, 40);
                     
                     this.ctx.font = 'bold 20px Arial';
@@ -2899,10 +2991,12 @@
                 this.ctx.restore();
                 
                 // Sub text
-                if (this.wave > 1) {
-                    this.ctx.font = '24px Arial';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.font = '24px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillStyle = '#FFFFFF';
+                if (this.wave === 1) {
+                    this.ctx.fillText('Get ready to start your adventure!', 400, 280);
+                } else {
                     this.ctx.fillText('Get ready for increased difficulty!', 400, 280);
                 }
             }
