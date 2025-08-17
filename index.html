@@ -59,21 +59,24 @@
             flex-direction: column;
             align-items: flex-end;
         }
-        
+
         .game-button {
             background: #ff6b6b;
             color: white;
             border: none;
-            padding: 5px 10px;
+            padding: 8px 15px;
             border-radius: 5px;
             cursor: pointer;
             margin: 2px;
             font-size: 14px;
             font-weight: bold;
+            position: relative;
+            z-index: 1000;
         }
         
         .game-button:hover {
             background: #ff5252;
+            transform: scale(1.05);
         }
         
         #pauseButton {
@@ -95,6 +98,7 @@
             padding: 5px 10px;
             background: rgba(0,0,0,0.7);
             border-radius: 5px;
+            pointer-events: auto;
         }
 
         #timerBar {
@@ -136,6 +140,9 @@
 
     <div id="ui">
         <div id="leftUI">
+            <div class="ui-element" id="timerDisplay" style="font-size: 24px; font-weight: bold; color: #FFD700;">
+                ⏱️ <span id="timeLeft">15</span>s
+            </div>
             <div class="ui-element">
                 🎯 Ammo: <span id="ammoCount">0</span>
             </div>
@@ -169,7 +176,7 @@
             <div class="ui-element" id="powerUpDisplay" style="display: none;">
                 ⚡ Power: <span id="activePowerUp">None</span>
             </div>
-            <div class="ui-element">
+            <div class="ui-element" style="display: flex; gap: 5px;">
                 <button id="pauseButton" class="game-button" style="background: #2196F3;">Pause</button>
                 <button id="exitButton" class="game-button">Exit</button>
             </div>
@@ -177,7 +184,7 @@
     </div>
 
     <div id="instructions">
-                            <strong>Phase 1:</strong> Click and drag to dig tunnels • Water flows after countdown • Fill tank (20% min, 100% to skip timer)!<br>
+        <strong>Phase 1:</strong> Click and drag to dig tunnels • Fill tank (at least 20%, 100% to skip timer)!<br>
         <strong>Phase 2:</strong> A/D or ←/→ to move gun • Unlimited auto-fire • Destroy boulders within 1 minute!
     </div>
 
@@ -253,14 +260,18 @@
                 // Phase 1 variables
                 this.grid = [];
                 this.waterGrid = []; // Grid-based water simulation
+                this.grassGrid = []; // Track original grass positions
                 this.waterFlowing = false;
                 this.countdownTimer = 3000; // 3 second countdown
                 this.phaseStarted = false;
                 this.phaseTimer = CONFIG.AMMO_PHASE_TIME;
                 this.fuelLevel = 0; // Gradual fuel level 0-100
                 this.dustParticles = [];
+                this.dirtDecorations = []; // Decorative objects in dirt
                 this.tankFull = false; // Track if tank reached 100%
                 this.showingCongrats = false; // Showing congratulations screen
+                this.showingWaveScreen = false; // Showing wave announcement
+                this.waveScreenTimer = 0; // Timer for wave screen
                 
                 // Phase 2 variables
                 this.gun = { x: 400, y: 380, width: 40, height: 20 };
@@ -279,12 +290,8 @@
                 this.cameraShake = { x: 0, y: 0, intensity: 0 };
                 this.muzzleFlash = 0;
                 this.backgroundIndex = 0;
-                this.backgrounds = [
-                    '#1a237e', // Night forest
-                    '#388e3c', // Bright grassland  
-                    '#ff7043', // Colorful horizon
-                    '#8d6e63'  // Desert ruins
-                ];
+                this.backgrounds = ['morning', 'afternoon', 'evening', 'night'];
+                this.currentBackground = this.backgrounds[Math.floor(Math.random() * this.backgrounds.length)];
                 
                 // Sound system
                 this.audioContext = null;
@@ -442,6 +449,8 @@
                 // Clear game over state
                 this.gameOverName = '';
                 this.gameOverNameSubmitted = false;
+                this.showingWaveScreen = false;
+                this.waveScreenTimer = 0;
                 
                 // Clear all game data
                 this.bullets = [];
@@ -450,6 +459,7 @@
                 this.dustParticles = [];
                 this.impactParticles = [];
                 this.pendingSplits = [];
+                this.dirtDecorations = [];
                 this.transitioning = false;
                 this.activePowerUp = null;
                 this.collectedPowerUps = [];
@@ -467,10 +477,14 @@
                 // Create grid for Phase 1 (much finer cells for realistic dirt)
                 this.grid = [];
                 this.waterGrid = [];
+                this.waterDelay = []; // Track delay for water falling
+                this.grassGrid = []; // Track original grass positions
                 
                 for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
                     this.grid[y] = [];
                     this.waterGrid[y] = [];
+                    this.waterDelay[y] = [];
+                    this.grassGrid[y] = [];
                     for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
                         if (y < 12) {
                             this.grid[y][x] = TERRAIN.SKY;
@@ -480,6 +494,14 @@
                             this.grid[y][x] = TERRAIN.WALL;
                         }
                         this.waterGrid[y][x] = 0; // Initialize water amount to 0
+                        this.waterDelay[y][x] = 0; // Initialize delay to 0
+                        
+                        // Mark original grass positions (dirt adjacent to sky)
+                        if (y === 12 && this.grid[y][x] === TERRAIN.SAND) {
+                            this.grassGrid[y][x] = true;
+                        } else {
+                            this.grassGrid[y][x] = false;
+                        }
                     }
                 }
                 
@@ -542,8 +564,59 @@
                     this.powerUps.push({ x, y, collected: false, type });
                 }
                 
+                // Add decorative objects in dirt
+                this.addDirtDecorations();
+                
                 // Debug: Log positions
                 console.log(`Wave ${this.wave}: Tank at (${this.tankX}, ${this.tankY}), Tap at (${this.tapX}, ${this.tapY})`);
+            }
+            
+            addDirtDecorations() {
+                // Clear previous decorations
+                this.dirtDecorations = [];
+                
+                // Add fewer decorations - just 3-6 scattered around
+                const decorationCount = 3 + Math.floor(Math.random() * 4);
+                const decorationTypes = ['bone', 'rock', 'stone', 'fossil'];
+                
+                for (let i = 0; i < decorationCount; i++) {
+                    let x, y;
+                    let attempts = 0;
+                    
+                    // Find valid position in dirt
+                    do {
+                        x = Math.floor(Math.random() * CONFIG.GRID_WIDTH);
+                        y = 15 + Math.floor(Math.random() * 50);
+                        attempts++;
+                    } while ((this.grid[y] && this.grid[y][x] !== TERRAIN.SAND || 
+                              this.isNearPowerUp(x, y) || 
+                              this.isNearTank(x, y)) && 
+                              attempts < 50);
+                    
+                    if (attempts < 50) {
+                        const type = decorationTypes[Math.floor(Math.random() * decorationTypes.length)];
+                        // Bones are bigger than other decorations
+                        const scale = type === 'bone' ? 
+                            1.2 + Math.random() * 0.8 : // Bones: 1.2 to 2.0
+                            0.7 + Math.random() * 0.6;   // Others: 0.7 to 1.3
+                        const rotation = Math.random() * Math.PI * 2; // Random rotation 0-360 degrees
+                        this.dirtDecorations.push({ x, y, type, scale, rotation });
+                    }
+                }
+            }
+            
+            isNearPowerUp(x, y) {
+                for (const powerUp of this.powerUps) {
+                    if (Math.abs(powerUp.x - x) < 5 && Math.abs(powerUp.y - y) < 5) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            isNearTank(x, y) {
+                return x >= this.tankX - 5 && x <= this.tankX + 37 && 
+                       y >= this.tankY - 5 && y <= this.tankY + 25;
             }
             
             addStrategicWalls() {
@@ -568,25 +641,52 @@
             }
             
             addWaveComplexity() {
-                // Progressive obstacle difficulty targeting paths to tank
+                // Progressive obstacle difficulty with challenging puzzles
                 if (this.wave <= 2) {
-                    // Waves 1-2: Simple obstacles near path
+                    // Waves 1-2: Introduction to puzzle mechanics
                     this.addPathBlockers(1);
-                } else if (this.wave <= 5) {
-                    // Waves 3-5: More complex patterns
+                    this.addSimpleDetour();
+                } else if (this.wave <= 4) {
+                    // Waves 3-4: Multiple paths and choices
                     this.addPathBlockers(2);
                     this.addLShapedWalls(1);
-                } else if (this.wave <= 8) {
-                    // Waves 6-8: Challenging layouts
+                    this.addFakePaths(1);
+                    this.addZigzagPath(1);
+                    this.addStoneChunks(2 + Math.floor(this.wave / 2));
+                } else if (this.wave <= 6) {
+                    // Waves 5-6: Complex routing puzzles
                     this.addPathBlockers(2);
                     this.addLShapedWalls(2);
-                    this.addFloatingPlatforms(this.wave - 5);
-                } else {
-                    // Waves 9+: Maximum complexity
+                    this.addFloatingPlatforms(1);
+                    this.addFakePaths(2);
+                    this.addZigzagPath(2);
+                    this.addUTurnPuzzle();
+                    this.addOneWayValves();
+                    this.addStoneChunks(4 + this.wave);
+                } else if (this.wave <= 8) {
+                    // Waves 7-8: Advanced puzzles
                     this.addPathBlockers(3);
                     this.addLShapedWalls(2);
                     this.addFloatingPlatforms(2);
+                    this.addMazeSection(1);
+                    this.addFakePaths(2);
+                    this.addSpiralPuzzle();
+                    this.addZigzagPath(2);
+                    this.addWaterReservoirs();
+                    this.addStoneChunks(6 + this.wave);
+                } else {
+                    // Waves 9+: Maximum complexity with intricate puzzles
+                    this.addPathBlockers(3);
+                    this.addLShapedWalls(3);
+                    this.addFloatingPlatforms(2);
                     this.addMazeSection(Math.min(this.wave - 8, 3));
+                    this.addFakePaths(3);
+                    this.addSpiralPuzzle();
+                    this.addUTurnPuzzle();
+                    this.addMultiLevelPuzzle();
+                    this.addOneWayValves();
+                    this.addWaterReservoirs();
+                    this.addStoneChunks(8 + this.wave);
                 }
             }
             
@@ -733,6 +833,364 @@
                     }
                 }
             }
+            
+            addSimpleDetour() {
+                // Create a simple wall that forces a detour
+                const midX = (this.tapX + this.tankX + 16) / 2;
+                const midY = (this.tapY + this.tankY) / 2;
+                
+                // Horizontal barrier
+                for (let x = -15; x <= 15; x++) {
+                    const wallX = Math.floor(midX + x);
+                    if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH && 
+                        this.grid[Math.floor(midY)][wallX] === TERRAIN.SAND) {
+                        this.grid[Math.floor(midY)][wallX] = TERRAIN.WALL;
+                    }
+                }
+            }
+            
+            addFakePaths(count) {
+                // Create tempting paths that lead to dead ends
+                for (let i = 0; i < count; i++) {
+                    const side = Math.random() < 0.5 ? -1 : 1;
+                    const fakeX = this.tankX + 16 + side * (25 + Math.random() * 15);
+                    const fakeY = this.tankY - 20 - Math.random() * 15;
+                    
+                    if (fakeX < 10 || fakeX > CONFIG.GRID_WIDTH - 10 || fakeY < 20) continue;
+                    
+                    // Create inviting entrance with gradual narrowing
+                    for (let y = 0; y < 15; y++) {
+                        const width = 10 - Math.floor(y * 0.6);
+                        const wallY = Math.floor(fakeY + y);
+                        if (wallY >= CONFIG.GRID_HEIGHT) break;
+                        
+                        // Left wall
+                        if (fakeX - width >= 0 && this.grid[wallY][Math.floor(fakeX - width)] === TERRAIN.SAND) {
+                            this.grid[wallY][Math.floor(fakeX - width)] = TERRAIN.WALL;
+                        }
+                        // Right wall  
+                        if (fakeX + width < CONFIG.GRID_WIDTH && this.grid[wallY][Math.floor(fakeX + width)] === TERRAIN.SAND) {
+                            this.grid[wallY][Math.floor(fakeX + width)] = TERRAIN.WALL;
+                        }
+                    }
+                    
+                    // Seal the bottom
+                    const bottomY = Math.floor(fakeY + 15);
+                    if (bottomY < CONFIG.GRID_HEIGHT) {
+                        for (let x = -4; x <= 4; x++) {
+                            const wallX = Math.floor(fakeX + x);
+                            if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH &&
+                                this.grid[bottomY][wallX] === TERRAIN.SAND) {
+                                this.grid[bottomY][wallX] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            addZigzagPath(complexity) {
+                // Force water to flow in a zigzag pattern
+                const startX = this.tapX;
+                const startY = this.tapY + 10;
+                const segmentHeight = 8;
+                const segmentWidth = 20 + complexity * 5;
+                
+                for (let i = 0; i < complexity + 2; i++) {
+                    const y = startY + i * segmentHeight;
+                    if (y >= CONFIG.GRID_HEIGHT - 15) break;
+                    
+                    // Alternating barriers
+                    if (i % 2 === 0) {
+                        // Block right side, leave gap on left
+                        for (let x = startX - 5; x < startX + segmentWidth; x++) {
+                            if (x >= 0 && x < CONFIG.GRID_WIDTH && y < CONFIG.GRID_HEIGHT &&
+                                this.grid[y][x] === TERRAIN.SAND) {
+                                this.grid[y][x] = TERRAIN.WALL;
+                            }
+                        }
+                    } else {
+                        // Block left side, leave gap on right
+                        for (let x = startX - segmentWidth; x < startX + 5; x++) {
+                            if (x >= 0 && x < CONFIG.GRID_WIDTH && y < CONFIG.GRID_HEIGHT &&
+                                this.grid[y][x] === TERRAIN.SAND) {
+                                this.grid[y][x] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            addUTurnPuzzle() {
+                // Create a U-turn that forces water to go up before going down
+                const centerX = (this.tapX + this.tankX + 16) / 2;
+                const baseY = this.tankY - 25;
+                
+                if (baseY < 30) return;
+                
+                // Create U-shaped walls
+                for (let y = 0; y < 20; y++) {
+                    const wallY = baseY + y;
+                    if (wallY >= CONFIG.GRID_HEIGHT) break;
+                    
+                    // Left wall of U
+                    for (let x = -15; x < -12; x++) {
+                        const wallX = Math.floor(centerX + x);
+                        if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH &&
+                            this.grid[wallY][wallX] === TERRAIN.SAND) {
+                            this.grid[wallY][wallX] = TERRAIN.WALL;
+                        }
+                    }
+                    
+                    // Right wall of U
+                    for (let x = 12; x < 15; x++) {
+                        const wallX = Math.floor(centerX + x);
+                        if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH &&
+                            this.grid[wallY][wallX] === TERRAIN.SAND) {
+                            this.grid[wallY][wallX] = TERRAIN.WALL;
+                        }
+                    }
+                }
+                
+                // Bottom of U
+                const bottomY = baseY + 20;
+                if (bottomY < CONFIG.GRID_HEIGHT) {
+                    for (let x = -15; x <= 15; x++) {
+                        const wallX = Math.floor(centerX + x);
+                        if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH &&
+                            this.grid[bottomY][wallX] === TERRAIN.SAND) {
+                            this.grid[bottomY][wallX] = TERRAIN.WALL;
+                        }
+                    }
+                }
+                
+                // Add a barrier above to force going around
+                for (let x = -8; x <= 8; x++) {
+                    const wallX = Math.floor(centerX + x);
+                    const wallY = baseY - 5;
+                    if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH && wallY >= 0 &&
+                        this.grid[wallY][wallX] === TERRAIN.SAND) {
+                        this.grid[wallY][wallX] = TERRAIN.WALL;
+                    }
+                }
+            }
+            
+            addSpiralPuzzle() {
+                // Create a spiral that requires careful path planning
+                const centerX = this.tankX + 16 + (Math.random() - 0.5) * 30;
+                const centerY = this.tankY - 30;
+                
+                if (centerX < 25 || centerX > CONFIG.GRID_WIDTH - 25 || centerY < 25) return;
+                
+                // Create spiral walls
+                let angle = 0;
+                let radius = 4;
+                const maxRadius = 18;
+                
+                while (radius < maxRadius) {
+                    const x = Math.floor(centerX + Math.cos(angle) * radius);
+                    const y = Math.floor(centerY + Math.sin(angle) * radius);
+                    
+                    if (x >= 0 && x < CONFIG.GRID_WIDTH && y >= 0 && y < CONFIG.GRID_HEIGHT &&
+                        this.grid[y][x] === TERRAIN.SAND) {
+                        this.grid[y][x] = TERRAIN.WALL;
+                        
+                        // Make walls thicker for outer spiral
+                        if (radius > 10) {
+                            const x2 = Math.floor(centerX + Math.cos(angle) * (radius - 1));
+                            const y2 = Math.floor(centerY + Math.sin(angle) * (radius - 1));
+                            if (x2 >= 0 && x2 < CONFIG.GRID_WIDTH && y2 >= 0 && y2 < CONFIG.GRID_HEIGHT &&
+                                this.grid[y2][x2] === TERRAIN.SAND) {
+                                this.grid[y2][x2] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                    
+                    angle += 0.2;
+                    radius += 0.08;
+                }
+            }
+            
+            addMultiLevelPuzzle() {
+                // Create a multi-level puzzle that requires thinking in 3D
+                const baseX = (this.tapX + this.tankX + 16) / 2;
+                const levels = 3;
+                
+                for (let level = 0; level < levels; level++) {
+                    const levelY = this.tapY + 15 + level * 12;
+                    if (levelY >= CONFIG.GRID_HEIGHT - 20) break;
+                    
+                    // Create platforms with gaps
+                    for (let x = -25; x <= 25; x++) {
+                        // Leave gaps for water to fall through
+                        if (Math.abs(x - level * 8) > 3) {
+                            const wallX = Math.floor(baseX + x);
+                            if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH &&
+                                this.grid[levelY][wallX] === TERRAIN.SAND) {
+                                this.grid[levelY][wallX] = TERRAIN.WALL;
+                            }
+                        }
+                    }
+                    
+                    // Add side walls to guide flow
+                    for (let y = 0; y < 8; y++) {
+                        const wallY = levelY - y;
+                        if (wallY < 0) continue;
+                        
+                        // Left guide wall
+                        const leftX = Math.floor(baseX - 25 + level * 3);
+                        if (leftX >= 0 && leftX < CONFIG.GRID_WIDTH &&
+                            this.grid[wallY][leftX] === TERRAIN.SAND) {
+                            this.grid[wallY][leftX] = TERRAIN.WALL;
+                        }
+                        
+                        // Right guide wall
+                        const rightX = Math.floor(baseX + 25 - level * 3);
+                        if (rightX >= 0 && rightX < CONFIG.GRID_WIDTH &&
+                            this.grid[wallY][rightX] === TERRAIN.SAND) {
+                            this.grid[wallY][rightX] = TERRAIN.WALL;
+                        }
+                    }
+                }
+            }
+            
+            addOneWayValves() {
+                // Create narrow passages that require pressure buildup
+                const numValves = Math.min(2 + Math.floor(this.wave / 3), 4);
+                
+                for (let i = 0; i < numValves; i++) {
+                    const valveX = this.tapX + (Math.random() - 0.5) * 60;
+                    const valveY = this.tapY + 20 + i * 15;
+                    
+                    if (valveX < 20 || valveX > CONFIG.GRID_WIDTH - 20 || valveY >= CONFIG.GRID_HEIGHT - 20) continue;
+                    
+                    // Create a constriction point
+                    for (let y = -3; y <= 3; y++) {
+                        for (let x = -8; x <= 8; x++) {
+                            const wallX = Math.floor(valveX + x);
+                            const wallY = Math.floor(valveY + y);
+                            
+                            // Leave only a tiny gap in the middle
+                            if (Math.abs(x) > 1 || Math.abs(y) > 0) {
+                                if (wallX >= 0 && wallX < CONFIG.GRID_WIDTH && wallY >= 0 && wallY < CONFIG.GRID_HEIGHT &&
+                                    this.grid[wallY][wallX] === TERRAIN.SAND) {
+                                    this.grid[wallY][wallX] = TERRAIN.WALL;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            addWaterReservoirs() {
+                // Create reservoirs that must be filled before water can overflow
+                const numReservoirs = Math.min(1 + Math.floor(this.wave / 4), 3);
+                
+                for (let i = 0; i < numReservoirs; i++) {
+                    const resX = this.tankX + 16 + (Math.random() - 0.5) * 40;
+                    const resY = this.tankY - 30 - i * 20;
+                    
+                    if (resX < 15 || resX > CONFIG.GRID_WIDTH - 15 || resY < 15) continue;
+                    
+                    // Create reservoir walls
+                    const depth = 8 + Math.floor(Math.random() * 5);
+                    const width = 10 + Math.floor(Math.random() * 8);
+                    
+                    // Bottom and sides
+                    for (let y = 0; y < depth; y++) {
+                        const wallY = Math.floor(resY + y);
+                        if (wallY >= CONFIG.GRID_HEIGHT) break;
+                        
+                        // Left wall
+                        const leftX = Math.floor(resX - width/2);
+                        if (leftX >= 0 && this.grid[wallY][leftX] === TERRAIN.SAND) {
+                            this.grid[wallY][leftX] = TERRAIN.WALL;
+                        }
+                        
+                        // Right wall
+                        const rightX = Math.floor(resX + width/2);
+                        if (rightX < CONFIG.GRID_WIDTH && this.grid[wallY][rightX] === TERRAIN.SAND) {
+                            this.grid[wallY][rightX] = TERRAIN.WALL;
+                        }
+                        
+                        // Bottom
+                        if (y === depth - 1) {
+                            for (let x = -width/2; x <= width/2; x++) {
+                                const bottomX = Math.floor(resX + x);
+                                if (bottomX >= 0 && bottomX < CONFIG.GRID_WIDTH &&
+                                    this.grid[wallY][bottomX] === TERRAIN.SAND) {
+                                    this.grid[wallY][bottomX] = TERRAIN.WALL;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            addStoneChunks(count) {
+                // Add random large stone chunks as obstacles
+                const minSize = 5 + Math.floor(this.wave / 3);
+                const maxSize = 10 + Math.floor(this.wave / 2);
+                
+                for (let i = 0; i < count; i++) {
+                    // Random position avoiding critical paths
+                    let chunkX = Math.floor(Math.random() * (CONFIG.GRID_WIDTH - maxSize * 2) + maxSize);
+                    let chunkY = Math.floor(Math.random() * (CONFIG.GRID_HEIGHT - maxSize * 2 - 40) + 40);
+                    
+                    // Avoid placing directly between tap and tank
+                    const directPath = Math.abs(chunkX - (this.tapX + this.tankX + 16) / 2) < 20 &&
+                                     chunkY > this.tapY && chunkY < this.tankY;
+                    if (directPath) {
+                        chunkX += (Math.random() < 0.5 ? -30 : 30);
+                    }
+                    
+                    // Create irregular stone shape
+                    const width = minSize + Math.floor(Math.random() * (maxSize - minSize));
+                    const height = minSize + Math.floor(Math.random() * (maxSize - minSize));
+                    
+                    // Base rectangle
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const gridX = chunkX + x;
+                            const gridY = chunkY + y;
+                            
+                            if (gridX >= 0 && gridX < CONFIG.GRID_WIDTH &&
+                                gridY >= 0 && gridY < CONFIG.GRID_HEIGHT &&
+                                this.grid[gridY][gridX] === TERRAIN.SAND) {
+                                // Create irregular edges
+                                const edgeDistance = Math.min(x, y, width - x - 1, height - y - 1);
+                                const probability = edgeDistance === 0 ? 0.6 : 
+                                                  edgeDistance === 1 ? 0.8 : 1.0;
+                                
+                                if (Math.random() < probability) {
+                                    this.grid[gridY][gridX] = TERRAIN.WALL;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Add some random protrusions
+                    for (let j = 0; j < 3; j++) {
+                        const protX = chunkX + Math.floor(Math.random() * width);
+                        const protY = chunkY + Math.floor(Math.random() * height);
+                        const protSize = 2 + Math.floor(Math.random() * 3);
+                        
+                        for (let py = -protSize; py <= protSize; py++) {
+                            for (let px = -protSize; px <= protSize; px++) {
+                                const dist = Math.abs(px) + Math.abs(py);
+                                if (dist <= protSize) {
+                                    const gridX = protX + px;
+                                    const gridY = protY + py;
+                                    if (gridX >= 0 && gridX < CONFIG.GRID_WIDTH &&
+                                        gridY >= 0 && gridY < CONFIG.GRID_HEIGHT &&
+                                        this.grid[gridY][gridX] === TERRAIN.SAND) {
+                                        this.grid[gridY][gridX] = TERRAIN.WALL;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             setupEventListeners() {
                 // Mouse events
@@ -742,13 +1200,15 @@
                     this.mouse.y = e.clientY - rect.top;
                     
                     // Only allow digging after countdown in Phase 1
-                    if (this.currentState === GAME_STATE.PHASE1 && this.phaseStarted && !this.isPaused && !this.showingCongrats) {
-                        this.mouse.down = true;
+                    if (this.currentState === GAME_STATE.PHASE1 && this.phaseStarted && !this.showingCongrats) {
+                    this.mouse.down = true;
                     } else if (this.currentState !== GAME_STATE.PHASE1) {
                         this.mouse.down = true;
                     }
                     
-                    if (this.currentState === GAME_STATE.MENU) {
+                    if (this.showPauseMenu) {
+                        this.handlePauseMenuClick();
+                    } else if (this.currentState === GAME_STATE.MENU) {
                         this.handleMenuClick();
                     } else if (this.currentState === GAME_STATE.PHASE1) {
                         if (this.showingCongrats) {
@@ -758,12 +1218,10 @@
                         if (this.showingPowerUpSelection) {
                             this.handlePowerUpClick();
                         } else if (!this.isPaused) {
-                            this.fireBullet();
+                        this.fireBullet();
                         }
                     } else if (this.currentState === GAME_STATE.GAME_OVER) {
                         this.handleGameOverClick();
-                    } else if (this.showPauseMenu) {
-                        this.handlePauseMenuClick();
                     }
                 });
 
@@ -772,7 +1230,7 @@
                     this.mouse.x = e.clientX - rect.left;
                     this.mouse.y = e.clientY - rect.top;
                     
-                    if (this.mouse.down && this.currentState === GAME_STATE.PHASE1 && !this.isPaused && !this.showingCongrats && this.phaseStarted) {
+                    if (this.mouse.down && this.currentState === GAME_STATE.PHASE1 && !this.showingCongrats && this.phaseStarted && !this.isPaused) {
                         this.digTerrain();
                     }
                 });
@@ -908,10 +1366,15 @@
                                 
                                 this.grid[gridY][gridX] = TERRAIN.SKY;
                                 
-                                                        // Play dig sound (more frequent)
-                        if (Math.random() < 0.5) {
-                            this.playSound('dig');
-                        }
+                                // Remove any decorations at this position
+                                this.dirtDecorations = this.dirtDecorations.filter(decoration => 
+                                    decoration.x !== gridX || decoration.y !== gridY
+                                );
+                                
+                                // Play dig sound (more frequent)
+                                if (Math.random() < 0.5) {
+                                    this.playSound('dig');
+                                }
                                 
                                 // Create realistic dust particles - more variation
                                 const particleCount = 2 + Math.floor(Math.random() * 3);
@@ -1000,12 +1463,14 @@
             updateWaterSimulation() {
                 // Create a copy of water grid for next frame
                 const newWaterGrid = [];
+                const newWaterDelay = [];
                 for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
                     newWaterGrid[y] = [...this.waterGrid[y]];
+                    newWaterDelay[y] = [...this.waterDelay[y]];
                 }
                 
                 // Process water physics - multiple passes for better flow
-                for (let pass = 0; pass < 2; pass++) {
+                for (let pass = 0; pass < 3; pass++) { // More passes for complex puzzles
                     // Process from bottom to top for better settling
                     for (let y = CONFIG.GRID_HEIGHT - 1; y >= 0; y--) {
                         for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
@@ -1052,11 +1517,19 @@
                                 continue;
                             }
                             
-                            // Try to flow down
+                            // Try to flow down - with delay
                             let flowed = false;
                             if (y < CONFIG.GRID_HEIGHT - 1) {
                                 const below = this.grid[y + 1][x];
                                 if (below === TERRAIN.SKY || below === TERRAIN.TANK) {
+                                    // Check if this cell just received water (delay before falling)
+                                    if (this.grid[y][x] === TERRAIN.SKY && water > 0 && this.waterGrid[y][x] === 0) {
+                                        // New water entering this cell, set delay
+                                        newWaterDelay[y][x] = 30; // ~0.5 seconds at 60fps
+                                    }
+                                    
+                                    // Only flow if delay has expired
+                                    if (newWaterDelay[y][x] <= 0) {
                                     const belowWater = newWaterGrid[y + 1][x];
                                     const space = CONFIG.MAX_WATER_PER_CELL - belowWater;
                                     if (space > 0) {
@@ -1064,6 +1537,47 @@
                                         newWaterGrid[y][x] -= flow;
                                         newWaterGrid[y + 1][x] += flow;
                                         flowed = true;
+                                        }
+                                    } else {
+                                        // Decrease delay
+                                        newWaterDelay[y][x]--;
+                                    }
+                                }
+                            }
+                            
+                            // Diagonal flow for better diagonal tunnels
+                            if (!flowed && y < CONFIG.GRID_HEIGHT - 1 && newWaterGrid[y][x] > 0.1) {
+                                // Try diagonal down-left
+                                if (x > 0) {
+                                    const diagCell = this.grid[y + 1][x - 1];
+                                    const sideCell = this.grid[y][x - 1];
+                                    if ((diagCell === TERRAIN.SKY || diagCell === TERRAIN.TANK) &&
+                                        (sideCell === TERRAIN.SKY || this.grid[y + 1][x] === TERRAIN.SKY)) {
+                                        const diagWater = newWaterGrid[y + 1][x - 1];
+                                        const space = CONFIG.MAX_WATER_PER_CELL - diagWater;
+                                        if (space > 0.05) {
+                                            const flow = Math.min(newWaterGrid[y][x] * 0.25, space * 0.5);
+                                            newWaterGrid[y][x] -= flow;
+                                            newWaterGrid[y + 1][x - 1] += flow;
+                                            flowed = true;
+                                        }
+                                    }
+                                }
+                                
+                                // Try diagonal down-right
+                                if (!flowed && x < CONFIG.GRID_WIDTH - 1) {
+                                    const diagCell = this.grid[y + 1][x + 1];
+                                    const sideCell = this.grid[y][x + 1];
+                                    if ((diagCell === TERRAIN.SKY || diagCell === TERRAIN.TANK) &&
+                                        (sideCell === TERRAIN.SKY || this.grid[y + 1][x] === TERRAIN.SKY)) {
+                                        const diagWater = newWaterGrid[y + 1][x + 1];
+                                        const space = CONFIG.MAX_WATER_PER_CELL - diagWater;
+                                        if (space > 0.05) {
+                                            const flow = Math.min(newWaterGrid[y][x] * 0.25, space * 0.5);
+                                            newWaterGrid[y][x] -= flow;
+                                            newWaterGrid[y + 1][x + 1] += flow;
+                                            flowed = true;
+                                        }
                                     }
                                 }
                             }
@@ -1104,8 +1618,9 @@
                     }
                 }
                 
-                // Update the water grid
+                // Update the water grid and delay
                 this.waterGrid = newWaterGrid;
+                this.waterDelay = newWaterDelay;
             }
             
             transitionToPhase2() {
@@ -1130,15 +1645,15 @@
                 const baseTime = CONFIG.BOULDER_PHASE_TIME;
                 const extraTime = Math.max(0, (boulderCount - 5) * 3000); // 3 extra seconds per boulder over 5
                 this.boulderPhaseTimer = baseTime + extraTime;
-                this.boulderPhaseStartCountdown = 3000; // 3 second countdown
+                this.boulderPhaseStartCountdown = 4000; // 3 second countdown + 1 second pause
                 
                 // Show power-up selection if any were collected
                 if (this.collectedPowerUps.length > 0) {
                     this.showPowerUpSelection();
                 } else {
-                    // Immediately create boulders and start phase 2
-                    this.createBoulders();
-                    this.updateUI();
+                // Immediately create boulders and start phase 2
+                this.createBoulders();
+                this.updateUI();
                 }
                 
                 // Debug: Log transition
@@ -1169,34 +1684,36 @@
             }
 
             calculateBoulderCount() {
-                // Calculate boulder count for timer scaling
+                // Calculate boulder count for timer scaling - more gradual progression
                 if (this.wave === 1) return 2;
                 else if (this.wave === 2) return 3;
-                else if (this.wave === 3) return 5;
-                else if (this.wave <= 5) return 6 + (this.wave - 3);
-                else if (this.wave <= 8) return 8 + (this.wave - 5);
-                else return Math.min(12 + Math.floor((this.wave - 8) * 1.5), 20);
+                else if (this.wave === 3) return 3;
+                else if (this.wave === 4) return 4;
+                else if (this.wave === 5) return 4;
+                else if (this.wave === 6) return 5;
+                else if (this.wave === 7) return 5;
+                else return Math.min(6 + Math.floor((this.wave - 8) * 0.5), 10); // Much gentler scaling
             }
-            
+
             createBoulders() {
                 this.boulders = [];
                 
                 // More gradual difficulty progression
                 let count, baseHP, sizeVariation;
                 
-                // Calculate scale factor based on boulder count
-                // More boulders = smaller scale to give more room
-                const boulderCount = this.calculateBoulderCount();
-                if (boulderCount <= 4) {
-                    this.scaleFactor = 1.0;
-                } else if (boulderCount <= 6) {
-                    this.scaleFactor = 0.80;
-                } else if (boulderCount <= 8) {
-                    this.scaleFactor = 0.65;
-                } else if (boulderCount <= 12) {
-                    this.scaleFactor = 0.50;
+                // Calculate scale factor based on wave for more room
+                if (this.wave <= 3) {
+                    this.scaleFactor = 1.0; // Normal size
+                } else if (this.wave <= 4) {
+                    this.scaleFactor = 0.7;
+                } else if (this.wave <= 5) {
+                    this.scaleFactor = 0.55;
+                } else if (this.wave <= 6) {
+                    this.scaleFactor = 0.45;
+                } else if (this.wave <= 8) {
+                    this.scaleFactor = 0.35;
                 } else {
-                    this.scaleFactor = 0.40; // Much smaller for very hard levels
+                    this.scaleFactor = 0.3; // Minimum 30% size for waves 9+
                 }
                 
                 // Update gun size based on scale
@@ -1251,15 +1768,16 @@
                     
                     this.boulders.push({
                         x: 100 + (i % 5) * 140 + Math.random() * 60,
-                        y: 30 + Math.floor(i / 5) * 100 + Math.random() * 40,
-                        vx: (Math.random() - 0.5) * 2.5 * speed, // Slower horizontal speed
-                        vy: Math.random() * 1.5, // Slower initial vertical speed
+                        y: -100 - Math.floor(i / 5) * 80 - Math.random() * 50, // Start above screen
+                        vx: (Math.random() - 0.5) * 1.5 * speed, // Even slower horizontal speed
+                        vy: 0, // No initial downward velocity - gravity will handle it
                         radius: radius,
                         hp: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
                         maxHP: boulderType === 'armored' ? Math.ceil(baseHP * 1.5) : baseHP,
                         size: radius > 30 ? 3 : (radius > 20 ? 2 : 1),
                         type: boulderType,
-                        speedMultiplier: boulderType === 'fast' ? 1.5 : 1
+                        speedMultiplier: boulderType === 'fast' ? 1.5 : 1,
+                        safetyTimer: 3000 // 3 seconds of safety
                     });
                 }
             }
@@ -1287,21 +1805,21 @@
                 
                 // Update gun movement (horizontal only) - only if not paused
                 if (!this.isPaused) {
-                    if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
-                        this.gun.x = Math.max(20, this.gun.x - CONFIG.GUN_SPEED);
-                    }
-                    if (this.keys['ArrowRight'] || this.keys['KeyD']) {
+                if (this.keys['ArrowLeft'] || this.keys['KeyA']) {
+                    this.gun.x = Math.max(20, this.gun.x - CONFIG.GUN_SPEED);
+                }
+                if (this.keys['ArrowRight'] || this.keys['KeyD']) {
                         this.gun.x = Math.min(800 - this.gun.width - 20, this.gun.x + CONFIG.GUN_SPEED);
                     }
                 }
 
                 // Auto-fire system (unlimited ammo in boulder phase) - only if not paused
                 if (!this.isPaused) {
-                    const now = Date.now();
+                const now = Date.now();
                     const fireRate = this.activePowerUp?.type === 'rapidFire' ? CONFIG.AUTO_FIRE_RATE / 2 : CONFIG.AUTO_FIRE_RATE;
                     if (now - this.lastAutoFire >= fireRate) {
-                        this.fireBullet();
-                        this.lastAutoFire = now;
+                    this.fireBullet();
+                    this.lastAutoFire = now;
                     }
                 }
 
@@ -1401,7 +1919,7 @@
                             other.vy -= speed * normalY * dampingFactor;
                             
                             // Apply velocity limits to prevent crazy speeds
-                            const maxSpeed = 8;
+                            const maxSpeed = 5; // Reduced from 8
                             boulder.vx = Math.max(-maxSpeed, Math.min(maxSpeed, boulder.vx));
                             boulder.vy = Math.max(-maxSpeed, Math.min(maxSpeed, boulder.vy));
                             other.vx = Math.max(-maxSpeed, Math.min(maxSpeed, other.vx));
@@ -1432,11 +1950,17 @@
                     boulder.vy += 0.2; // Slightly less gravity
                     
                     // Terminal velocity to prevent infinite acceleration
-                    const terminalVelocity = 12;
+                    const terminalVelocity = 8; // Reduced from 12
                     boulder.vy = Math.min(terminalVelocity, boulder.vy);
                     
-                    // Check gun collision (immediate game over)
-                    if (boulder.y + boulder.radius >= this.gun.y &&
+                    // Update safety timer
+                    if (boulder.safetyTimer > 0) {
+                        boulder.safetyTimer -= 16;
+                    }
+                    
+                    // Check gun collision (immediate game over) - but only after safety period
+                    if (boulder.safetyTimer <= 0 &&
+                        boulder.y + boulder.radius >= this.gun.y &&
                         boulder.x + boulder.radius >= this.gun.x && 
                         boulder.x - boulder.radius <= this.gun.x + this.gun.width) {
                         this.gameOver();
@@ -1484,6 +2008,7 @@
                 if (this.pendingSplits && this.pendingSplits.length > 0) {
                     this.boulders.push(...this.pendingSplits);
                     this.pendingSplits = [];
+                    this.dirtDecorations = [];
                 }
             }
 
@@ -1557,8 +2082,8 @@
                             this.pendingSplits.push({
                                 x: boulder.x + (i - 0.5) * 20,
                                 y: boulder.y,
-                                vx: (i - 0.5) * (3 + Math.random() * 2), // Moderate split velocity
-                                vy: -6 - Math.random() * 3, // Good upward velocity for split bouncing
+                                vx: (i - 0.5) * (2 + Math.random() * 1), // Reduced split velocity
+                                vy: -4 - Math.random() * 2, // Reduced upward velocity
                                 hp: Math.ceil(boulder.maxHP * 0.6),
                                 maxHP: Math.ceil(boulder.maxHP * 0.6),
                                 size: newSize,
@@ -1579,8 +2104,8 @@
                 
                 for (let i = 0; i < spread; i++) {
                     const angle = spread > 1 ? (i - 1) * 0.15 : 0; // Spread angle
-                                            this.bullets.push({
-                            x: this.gun.x + this.gun.width / 2,
+                this.bullets.push({
+                    x: this.gun.x + this.gun.width / 2,
                             y: this.gun.y,
                             vx: Math.sin(angle) * 3,
                             vy: -CONFIG.BULLET_SPEED,
@@ -1599,19 +2124,22 @@
 
             nextWave() {
                 this.wave++;
-                this.currentState = GAME_STATE.PHASE1;
-                this.phaseTimer = CONFIG.AMMO_PHASE_TIME;
-                this.fuelLevel = 0;
-                this.waterFlowing = false;
-                this.phaseStarted = false;
-                this.countdownTimer = 3000;
+                this.showingWaveScreen = true;
+                this.waveScreenTimer = 2000; // Show for 2 seconds
+                
+                // Don't immediately start phase 1, wait for wave screen to finish
                 this.transitioning = false; // Reset transitioning flag
+                
+                // Cycle background
+                this.backgroundIndex = (this.backgroundIndex + 1) % this.backgrounds.length;
+                this.currentBackground = this.backgrounds[this.backgroundIndex];
                 
                 // Clear all phase 2 data
                 this.bullets = [];
                 this.boulders = [];
                 this.impactParticles = [];
                 this.pendingSplits = []; // Clear any pending boulder splits
+                this.dirtDecorations = []; // Clear dirt decorations
                 this.activePowerUp = null; // Clear active power-up
                 this.collectedPowerUps = []; // Clear collected power-ups
                 
@@ -1622,6 +2150,19 @@
                 this.initializeGrid();
                 this.addWaveComplexity();
                 this.updateUI();
+                
+            }
+            
+            startNextWavePhase() {
+                // Actually start the next wave phase after the wave screen
+                this.currentState = GAME_STATE.PHASE1;
+                this.phaseTimer = CONFIG.AMMO_PHASE_TIME;
+                this.fuelLevel = 0;
+                this.waterFlowing = false;
+                this.phaseStarted = false;
+                this.countdownTimer = 3000;
+                this.showingWaveScreen = false;
+                this.waveScreenTimer = 0;
                 
                 // Debug: Log wave transition
                 console.log('Started Wave:', this.wave, 'Phase 1');
@@ -1636,6 +2177,14 @@
                 this.isPaused = false;
                 this.showPauseMenu = false;
                 this.showPauseInstructions = false;
+                this.showingWaveScreen = false;
+                this.waveScreenTimer = 0;
+                
+                // Reset pause button text
+                const pauseButton = document.getElementById('pauseButton');
+                if (pauseButton) {
+                    pauseButton.textContent = 'Pause';
+                }
                 
                 // Clear all game data
                 this.bullets = [];
@@ -1644,6 +2193,7 @@
                 this.dustParticles = [];
                 this.impactParticles = [];
                 this.pendingSplits = [];
+                this.dirtDecorations = [];
                 this.transitioning = false;
                 this.showingPowerUpSelection = false;
                 this.activePowerUp = null;
@@ -1652,14 +2202,8 @@
                 this.boulderPhaseStartCountdown = 0;
                 this.tankFull = false;
                 this.showingCongrats = false;
-                
-                // Reset pause button text
-                const pauseButton = document.getElementById('pauseButton');
-                if (pauseButton) {
-                    pauseButton.textContent = 'Pause';
-                }
             }
-            
+
             gameOver() {
                 // Set game over state
                 this.currentState = GAME_STATE.GAME_OVER;
@@ -1697,6 +2241,7 @@
                 this.dustParticles = [];
                 this.impactParticles = [];
                 this.pendingSplits = [];
+                this.dirtDecorations = [];
                 this.transitioning = false;
                 this.showingPowerUpSelection = false;
                 this.activePowerUp = null;
@@ -1733,18 +2278,18 @@
 
             updateUI() {
                 // Hide/show UI based on game state
-                const gameUI = document.querySelector('.ui');
+                const gameUI = document.getElementById('ui');
                 const exitButton = document.getElementById('exitButton');
                 const pauseButton = document.getElementById('pauseButton');
                 
-                if (this.currentState === GAME_STATE.MENU) {
+                if (this.currentState === GAME_STATE.MENU || this.currentState === GAME_STATE.GAME_OVER) {
                     if (gameUI) gameUI.style.display = 'none';
                     if (exitButton) exitButton.style.display = 'none';
                     if (pauseButton) pauseButton.style.display = 'none';
                 } else {
-                    if (gameUI) gameUI.style.display = 'block';
-                    if (exitButton) exitButton.style.display = 'block';
-                    if (pauseButton) pauseButton.style.display = 'block';
+                    if (gameUI) gameUI.style.display = 'flex';
+                    if (exitButton) exitButton.style.display = 'inline-block';
+                    if (pauseButton) pauseButton.style.display = 'inline-block';
                     
                     document.getElementById('waveCount').textContent = this.wave;
                     document.getElementById('score').textContent = this.score;
@@ -1786,6 +2331,7 @@
                         const timerPercent = (this.phaseTimer / CONFIG.AMMO_PHASE_TIME) * 100;
                         timerFill.style.width = timerPercent + '%';
                         document.getElementById('ammoCount').textContent = Math.floor(this.fuelLevel) + '%';
+                        document.getElementById('timeLeft').textContent = Math.ceil(this.phaseTimer / 1000);
                     } else {
                         let phaseText = 'PHASE 2: DESTROY BOULDERS';
                         // Add scale indicator if needed
@@ -1803,6 +2349,7 @@
                         const timerPercent = (this.boulderPhaseTimer / totalTime) * 100;
                         timerFill.style.width = timerPercent + '%';
                         document.getElementById('ammoCount').textContent = 'UNLIMITED';
+                        document.getElementById('timeLeft').textContent = Math.ceil(this.boulderPhaseTimer / 1000);
                     }
                 }
             }
@@ -1843,7 +2390,7 @@
                     bgGradient.addColorStop(0.5, colorSet[1]);
                     bgGradient.addColorStop(1, colorSet[2]);
                     this.ctx.fillStyle = bgGradient;
-                    this.ctx.fillRect(-10, -10, 820, 420);
+                this.ctx.fillRect(-10, -10, 820, 420);
                     
                     // Add stars for night background
                     if (this.backgroundIndex % 4 === 0) {
@@ -1884,6 +2431,11 @@
                 // Render pause menu if showing
                 if (this.showPauseMenu) {
                     this.renderPauseMenu();
+                }
+                
+                // Render wave screen if showing
+                if (this.showingWaveScreen) {
+                    this.renderWaveScreen();
                 }
             }
             
@@ -1968,15 +2520,15 @@
                     const instructions = [
                         'PHASE 1 - FUEL COLLECTION:',
                         '• Click and drag to dig tunnels through the dirt',
-                        '• Water flows automatically after 3-2-1 countdown',
-                        '• Guide water to the tank at bottom left',
-                        '• Collect ANY fuel before time runs out!',
+                        '• Guide water from tap to tank below',
+                        '• Fill tank to at least 20% (100% to skip timer)',
+                        '• Collect power-up diamonds for Phase 2 boosts',
                         '',
                         'PHASE 2 - BOULDER DESTRUCTION:',
-                        '• Use A/D or ←/→ keys to move your gun',
+                        '• Use A/D or ←/→ keys to move your cannon',
                         '• Auto-fire shoots at bouncing boulders',
-                        '• Destroy all boulders within 1 minute',
-                        '• Game gets harder each wave!'
+                        '• Destroy all boulders before time runs out',
+                        '• Larger boulders split when destroyed!'
                     ];
                     
                     let y = 130;
@@ -2314,12 +2866,53 @@
                 }
             }
             
+            renderWaveScreen() {
+                // Dark overlay
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                // Wave text
+                this.ctx.save();
+                this.ctx.font = 'bold 72px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                
+                // Animated scale effect
+                const scale = 1 + Math.sin(Date.now() * 0.003) * 0.1;
+                this.ctx.translate(400, 200);
+                this.ctx.scale(scale, scale);
+                
+                // Text with gradient
+                const gradient = this.ctx.createLinearGradient(-200, 0, 200, 0);
+                gradient.addColorStop(0, '#FFD700');
+                gradient.addColorStop(0.5, '#FFA500');
+                gradient.addColorStop(1, '#FF6347');
+                
+                this.ctx.fillStyle = gradient;
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 4;
+                
+                const waveText = `WAVE ${this.wave}`;
+                this.ctx.strokeText(waveText, 0, 0);
+                this.ctx.fillText(waveText, 0, 0);
+                
+                this.ctx.restore();
+                
+                // Sub text
+                if (this.wave > 1) {
+                    this.ctx.font = '24px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('Get ready for increased difficulty!', 400, 280);
+                }
+            }
+            
             handlePauseMenuClick() {
                 const centerX = 400;
                 const buttonWidth = 200;
-                const buttonHeight = 40;
-                const baseY = 150;
-                const spacing = 50;
+                const buttonHeight = 50;
+                const baseY = 130;
+                const spacing = 60;
                 
                 // Resume button
                 if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
@@ -2330,22 +2923,20 @@
                 // Instructions button
                 else if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
                          this.mouse.y > baseY + spacing && this.mouse.y < baseY + spacing + buttonHeight) {
-                    // Show instructions without unpausing
                     this.showPauseInstructions = true;
                 }
                 
-                // Restart button
+                // Quit button
                 else if (this.mouse.x > centerX - buttonWidth/2 && this.mouse.x < centerX + buttonWidth/2 &&
                          this.mouse.y > baseY + spacing * 2 && this.mouse.y < baseY + spacing * 2 + buttonHeight) {
-                    if (confirm('Are you sure you want to restart? Current progress will be lost.')) {
+                    if (confirm('Are you sure you want to quit to main menu?')) {
                         this.isPaused = false;
                         this.showPauseMenu = false;
                         this.exitToMenu();
-                        this.startGame(); // Restart game from wave 1
                     }
                 }
                 
-                // Back from instructions
+                // Back button from instructions
                 if (this.showPauseInstructions) {
                     if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
                         this.mouse.y > 340 && this.mouse.y < 380) {
@@ -2360,34 +2951,33 @@
                 this.ctx.fillRect(0, 0, 800, 400);
                 
                 if (this.showPauseInstructions) {
-                    // Show instructions
-                    this.ctx.font = 'bold 28px Arial';
-                    this.ctx.fillStyle = '#FFFFFF';
+                    // Instructions screen
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#00FFFF';
                     this.ctx.textAlign = 'center';
-                    this.ctx.fillText('GAME INSTRUCTIONS', 400, 80);
+                    this.ctx.fillText('GAME INSTRUCTIONS', 400, 50);
                     
                     this.ctx.font = '18px Arial';
                     this.ctx.textAlign = 'left';
+                    this.ctx.fillStyle = '#FFFFFF';
                     const instructions = [
                         'PHASE 1 - FUEL COLLECTION:',
-                        '• Click and drag to dig tunnels',
-                        '• Guide water to fill the tank (20% minimum)',
-                        '• Fill to 100% to skip timer',
-                        '• Collect power-up diamonds',
+                        '• Click and drag to dig tunnels through dirt',
+                        '• Guide water from tap to tank below',
+                        '• Fill tank to at least 20% (100% to skip timer)',
+                        '• Collect power-up diamonds for Phase 2 boosts',
                         '',
                         'PHASE 2 - BOULDER DESTRUCTION:',
-                        '• Use A/D or ←/→ to move gun',
-                        '• Auto-fire destroys boulders',
-                        '• Larger boulders split when destroyed',
-                        '• Clear all boulders before time runs out',
-                        '',
-                        'Press ESC to pause anytime'
+                        '• Use A/D or ←/→ keys to move your cannon',
+                        '• Cannon fires automatically with unlimited ammo',
+                        '• Destroy all boulders before time runs out',
+                        '• Larger boulders split when destroyed!'
                     ];
                     
-                    let y = 120;
+                    let y = 90;
                     for (const line of instructions) {
                         this.ctx.fillText(line, 100, y);
-                        y += 22;
+                        y += 25;
                     }
                     
                     // Back button
@@ -2402,17 +2992,17 @@
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.fillText('BACK', 400, 365);
                 } else {
-                    // Pause menu
+                    // Main pause menu
                     this.ctx.font = 'bold 48px Arial';
                     this.ctx.fillStyle = '#FFFFFF';
                     this.ctx.textAlign = 'center';
-                    this.ctx.fillText('PAUSED', 400, 80);
+                    this.ctx.fillText('PAUSED', 400, 70);
                     
                     const centerX = 400;
                     const buttonWidth = 200;
-                    const buttonHeight = 40;
-                    const baseY = 150;
-                    const spacing = 50;
+                    const buttonHeight = 50;
+                    const baseY = 130;
+                    const spacing = 60;
                     
                     // Resume button
                     this.ctx.fillStyle = '#4CAF50';
@@ -2423,7 +3013,7 @@
                     
                     this.ctx.font = 'bold 24px Arial';
                     this.ctx.fillStyle = '#FFFFFF';
-                    this.ctx.fillText('RESUME', centerX, baseY + 27);
+                    this.ctx.fillText('RESUME', centerX, baseY + 32);
                     
                     // Instructions button
                     this.ctx.fillStyle = '#2196F3';
@@ -2431,20 +3021,22 @@
                     this.ctx.strokeStyle = '#1565C0';
                     this.ctx.strokeRect(centerX - buttonWidth/2, baseY + spacing, buttonWidth, buttonHeight);
                     
-                    this.ctx.fillText('INSTRUCTIONS', centerX, baseY + spacing + 27);
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('INSTRUCTIONS', centerX, baseY + spacing + 32);
                     
-                    // Restart button
+                    // Quit button
                     this.ctx.fillStyle = '#FF5722';
                     this.ctx.fillRect(centerX - buttonWidth/2, baseY + spacing * 2, buttonWidth, buttonHeight);
                     this.ctx.strokeStyle = '#D84315';
                     this.ctx.strokeRect(centerX - buttonWidth/2, baseY + spacing * 2, buttonWidth, buttonHeight);
                     
-                    this.ctx.fillText('RESTART', centerX, baseY + spacing * 2 + 27);
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('QUIT', centerX, baseY + spacing * 2 + 32);
                     
                     // Tip
                     this.ctx.font = '16px Arial';
                     this.ctx.fillStyle = '#CCCCCC';
-                    this.ctx.fillText('Press ESC to resume', centerX, 320);
+                    this.ctx.fillText('Press ESC to resume', centerX, 330);
                 }
             }
             
@@ -2665,6 +3257,148 @@
                 this.ctx.fillText('Selected Skin', x + 40, y + 60);
             }
             
+            renderBackgroundDecorations() {
+                // Render sky gradient based on time of day
+                const gradient = this.ctx.createLinearGradient(0, 0, 0, 400);
+                
+                switch(this.currentBackground) {
+                    case 'morning':
+                        gradient.addColorStop(0, '#87CEEB'); // Sky blue
+                        gradient.addColorStop(0.5, '#FFE4B5'); // Moccasin
+                        gradient.addColorStop(1, '#FFD700'); // Gold
+                        break;
+                    case 'afternoon':
+                        gradient.addColorStop(0, '#00BFFF'); // Deep sky blue
+                        gradient.addColorStop(0.7, '#87CEEB'); // Sky blue
+                        gradient.addColorStop(1, '#98FB98'); // Pale green
+                        break;
+                    case 'evening':
+                        gradient.addColorStop(0, '#FF6B6B'); // Sunset red
+                        gradient.addColorStop(0.3, '#FF8E53'); // Orange
+                        gradient.addColorStop(0.6, '#FFA07A'); // Light salmon
+                        gradient.addColorStop(1, '#4A148C'); // Deep purple
+                        break;
+                    case 'night':
+                        gradient.addColorStop(0, '#000428'); // Dark blue
+                        gradient.addColorStop(0.5, '#004e92'); // Medium blue
+                        gradient.addColorStop(1, '#000428'); // Dark blue
+                        break;
+                }
+                
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                // Stars for night time
+                if (this.currentBackground === 'night') {
+                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    for (let i = 0; i < 50; i++) {
+                        const x = (i * 137) % 800;
+                        const y = (i * 97) % 200;
+                        const size = (i % 3) + 1;
+                        this.ctx.fillRect(x, y, size, size);
+                    }
+                }
+                
+                // Sun/Moon
+                if (this.currentBackground === 'morning' || this.currentBackground === 'afternoon') {
+                    // Sun
+                    this.ctx.fillStyle = '#FFD700';
+                    const sunY = this.currentBackground === 'morning' ? 60 : 40;
+                    this.ctx.beginPath();
+                    this.ctx.arc(700, sunY, 25, 0, Math.PI * 2);
+                    this.ctx.fill();
+                } else if (this.currentBackground === 'night') {
+                    // Moon
+                    this.ctx.fillStyle = '#F0E68C';
+                    this.ctx.beginPath();
+                    this.ctx.arc(700, 50, 20, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    // Moon craters
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                    this.ctx.beginPath();
+                    this.ctx.arc(695, 45, 3, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    this.ctx.beginPath();
+                    this.ctx.arc(705, 52, 4, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+                
+                // Pixelated clouds with appropriate colors
+                const cloudColor = this.currentBackground === 'night' ? 
+                    'rgba(100, 100, 100, 0.4)' : 
+                    this.currentBackground === 'evening' ? 
+                    'rgba(255, 200, 200, 0.5)' : 
+                    'rgba(255, 255, 255, 0.6)';
+                
+                this.ctx.fillStyle = cloudColor;
+                
+                // Cloud 1 - slow drift to the right
+                const cloud1X = ((Date.now() * 0.005) % 900) - 100;
+                this.drawPixelCloud(cloud1X, 30, 1);
+                
+                // Cloud 2 - slower drift
+                const cloud2X = ((Date.now() * 0.003) % 900) - 100;
+                this.drawPixelCloud(cloud2X, 50, 2);
+                
+                // Cloud 3 - slowest drift
+                const cloud3X = ((Date.now() * 0.002) % 900) - 100;
+                this.drawPixelCloud(cloud3X, 40, 3);
+            }
+            
+            drawPixelCloud(x, y, type) {
+                this.ctx.save();
+                this.ctx.translate(x, y);
+                
+                const pixelSize = 4;
+                
+                // Different cloud patterns
+                let cloudPattern;
+                if (type === 1) {
+                    // Small cloud
+                    cloudPattern = [
+                        [0, 0, 1, 1, 0, 0],
+                        [0, 1, 1, 1, 1, 0],
+                        [1, 1, 1, 1, 1, 1],
+                        [0, 1, 1, 1, 1, 0]
+                    ];
+                } else if (type === 2) {
+                    // Medium cloud
+                    cloudPattern = [
+                        [0, 0, 1, 1, 1, 0, 0, 0],
+                        [0, 1, 1, 1, 1, 1, 0, 0],
+                        [1, 1, 1, 1, 1, 1, 1, 0],
+                        [1, 1, 1, 1, 1, 1, 1, 1],
+                        [0, 1, 1, 1, 1, 1, 1, 0]
+                    ];
+                } else {
+                    // Large cloud
+                    cloudPattern = [
+                        [0, 0, 0, 1, 1, 1, 0, 0, 0],
+                        [0, 1, 1, 1, 1, 1, 1, 1, 0],
+                        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+                        [1, 1, 1, 1, 1, 1, 1, 1, 1],
+                        [0, 1, 1, 1, 1, 1, 1, 1, 0],
+                        [0, 0, 1, 1, 1, 1, 1, 0, 0]
+                    ];
+                }
+                
+                // Draw pixelated cloud
+                for (let row = 0; row < cloudPattern.length; row++) {
+                    for (let col = 0; col < cloudPattern[row].length; col++) {
+                        if (cloudPattern[row][col] === 1) {
+                            this.ctx.fillRect(
+                                col * pixelSize - (cloudPattern[row].length * pixelSize) / 2,
+                                row * pixelSize - (cloudPattern.length * pixelSize) / 2,
+                                pixelSize,
+                                pixelSize
+                            );
+                        }
+                    }
+                }
+                
+                this.ctx.restore();
+            }
+            
             renderMenuBackground() {
                 // Render dirt texture background for menu
                 for (let y = 12; y < 80; y++) {
@@ -2718,6 +3452,9 @@
             }
 
             renderPhase1() {
+                // Draw background decorations with time of day
+                this.renderBackgroundDecorations();
+                
                 // Render grid
                 for (let y = 0; y < CONFIG.GRID_HEIGHT; y++) {
                     for (let x = 0; x < CONFIG.GRID_WIDTH; x++) {
@@ -2730,16 +3467,55 @@
                                 // Already sky blue background
                                 break;
                             case TERRAIN.SAND:
-                                // Varied sand colors for texture
-                                const sandVariation = (x * 7 + y * 13) % 5;
-                                const sandColors = ['#C19A6B', '#B8860B', '#D2691E', '#CD853F', '#DEB887'];
-                                this.ctx.fillStyle = sandColors[sandVariation];
+                                // Create irregular dirt patterns using pseudo-random noise
+                                const noise1 = Math.sin(x * 0.3 + y * 0.7) * Math.cos(y * 0.2 - x * 0.5);
+                                const noise2 = Math.sin((x + y) * 0.15) * Math.cos((x - y) * 0.25);
+                                const noise = (noise1 + noise2 + 2) / 4; // Normalize to 0-1
+                                
+                                // Select dirt color based on noise - more uniform orange/brown
+                                const baseColor = '#CD853F'; // Peru - main dirt color
+                                const dirtColors = ['#D2691E', '#CD853F', '#CD853F', '#CD853F', '#BC8F3F']; // Mostly the same color
+                                const colorIndex = Math.floor(noise * dirtColors.length);
+                                this.ctx.fillStyle = dirtColors[colorIndex];
                                 this.ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
                                 
-                                // Occasional sand grain highlights
-                                if (Math.random() < 0.02) {
-                                    this.ctx.fillStyle = 'rgba(255, 228, 196, 0.6)';
+                                // Add subtle texture details
+                                if (noise > 0.8) {
+                                    // Very subtle darker patches
+                                    this.ctx.fillStyle = 'rgba(139, 69, 19, 0.1)';
+                                    this.ctx.fillRect(px + 2, py + 2, CONFIG.CELL_SIZE - 4, CONFIG.CELL_SIZE - 4);
+                                } else if (noise < 0.2) {
+                                    // Very subtle lighter patches
+                                    this.ctx.fillStyle = 'rgba(255, 222, 173, 0.1)';
+                                    this.ctx.fillRect(px + 1, py + 1, CONFIG.CELL_SIZE - 2, CONFIG.CELL_SIZE - 2);
+                                }
+                                
+                                // Random dirt particles
+                                if ((x * 17 + y * 23) % 13 === 0) {
+                                    this.ctx.fillStyle = '#8B4513';
                                     this.ctx.fillRect(px + 1, py + 1, 2, 2);
+                                }
+                                
+                                // Check if this position originally had grass
+                                if (this.grassGrid[y] && this.grassGrid[y][x]) {
+                                    // Draw grass on top
+                                    const grassGradient = this.ctx.createLinearGradient(px, py, px, py + 6);
+                                    grassGradient.addColorStop(0, '#228B22');
+                                    grassGradient.addColorStop(0.5, '#32CD32');
+                                    grassGradient.addColorStop(1, '#3CB371');
+                                    this.ctx.fillStyle = grassGradient;
+                                    this.ctx.fillRect(px, py, CONFIG.CELL_SIZE, 4);
+                                    
+                                    // Add grass blades
+                                    this.ctx.strokeStyle = '#228B22';
+                                    this.ctx.lineWidth = 1;
+                                    for (let i = 0; i < CONFIG.CELL_SIZE; i += 3) {
+                                        const height = 2 + Math.sin(x * 1.5 + i * 0.5) * 2;
+                                        this.ctx.beginPath();
+                                        this.ctx.moveTo(px + i, py + 3);
+                                        this.ctx.lineTo(px + i + Math.sin(i) * 0.5, py - height);
+                                        this.ctx.stroke();
+                                    }
                                 }
                                 break;
                             case TERRAIN.WALL:
@@ -2861,18 +3637,18 @@
                     this.ctx.textAlign = 'center';
                     this.ctx.textBaseline = 'middle';
                     
-                                            const seconds = Math.ceil(this.countdownTimer / 1000);
-                        if (seconds > 0) {
-                            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                            this.ctx.fillRect(0, 0, 800, 400);
-                            
+                    const seconds = Math.ceil(this.countdownTimer / 1000);
+                    if (seconds > 0) {
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                        this.ctx.fillRect(0, 0, 800, 400);
+                        
                             // Countdown number
-                            this.ctx.fillStyle = '#FFFFFF';
-                            this.ctx.strokeStyle = '#000000';
-                            this.ctx.lineWidth = 4;
-                            const text = seconds.toString();
-                            this.ctx.strokeText(text, 400, 200);
-                            this.ctx.fillText(text, 400, 200);
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        const text = seconds.toString();
+                        this.ctx.strokeText(text, 400, 200);
+                        this.ctx.fillText(text, 400, 200);
                             
                             // Instructions
                             this.ctx.font = '24px Arial';
@@ -2882,16 +3658,16 @@
                             const instruction = 'Fill the tank with fuel (at least 20%)!';
                             this.ctx.strokeText(instruction, 400, 280);
                             this.ctx.fillText(instruction, 400, 280);
-                        } else {
-                            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                            this.ctx.fillRect(0, 0, 800, 400);
-                            
-                            this.ctx.fillStyle = '#00FF00';
-                            this.ctx.strokeStyle = '#000000';
-                            this.ctx.lineWidth = 4;
-                            this.ctx.strokeText('GO!', 400, 200);
-                            this.ctx.fillText('GO!', 400, 200);
-                        }
+                    } else {
+                        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                        this.ctx.fillRect(0, 0, 800, 400);
+                        
+                        this.ctx.fillStyle = '#00FF00';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        this.ctx.strokeText('GO!', 400, 200);
+                        this.ctx.fillText('GO!', 400, 200);
+                    }
                     this.ctx.restore();
                 }
                 
@@ -2969,6 +3745,113 @@
                             }
                         }
                     }
+                }
+                
+                // Render dirt decorations
+                for (const decoration of this.dirtDecorations) {
+                    const px = decoration.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+                    const py = decoration.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+                    const scale = decoration.scale || 1;
+                    const rotation = decoration.rotation || 0;
+                    
+                    this.ctx.save();
+                    this.ctx.translate(px, py);
+                    this.ctx.rotate(rotation);
+                    this.ctx.scale(scale, scale);
+                    
+                    switch(decoration.type) {
+                        case 'bone':
+                            // Draw a more obvious bone
+                            this.ctx.fillStyle = '#FFFACD'; // Light yellow
+                            this.ctx.strokeStyle = '#DEB887'; // Darker outline
+                            this.ctx.lineWidth = 1.5;
+                            
+                            // Bone shaft - thicker and longer
+                            this.ctx.fillRect(-8, -2.5, 16, 5);
+                            this.ctx.strokeRect(-8, -2.5, 16, 5);
+                            
+                            // Bone ends - bigger and more pronounced
+                            this.ctx.beginPath();
+                            // Left end - double bulb
+                            this.ctx.arc(-8, -2, 3, 0, Math.PI * 2);
+                            this.ctx.arc(-8, 2, 3, 0, Math.PI * 2);
+                            // Right end - double bulb
+                            this.ctx.arc(8, -2, 3, 0, Math.PI * 2);
+                            this.ctx.arc(8, 2, 3, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            this.ctx.stroke();
+                            
+                            // Add center detail for realism
+                            this.ctx.strokeStyle = '#D2B48C';
+                            this.ctx.lineWidth = 0.5;
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(-4, 0);
+                            this.ctx.lineTo(4, 0);
+                            this.ctx.stroke();
+                            break;
+                            
+                        case 'rock':
+                            // Draw a small rock
+                            this.ctx.fillStyle = '#696969';
+                            this.ctx.strokeStyle = '#2F4F4F';
+                            this.ctx.lineWidth = 1;
+                            this.ctx.beginPath();
+                            this.ctx.ellipse(0, 0, 6, 4, 0, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            this.ctx.stroke();
+                            
+                            // Add some detail
+                            this.ctx.fillStyle = '#595959';
+                            this.ctx.beginPath();
+                            this.ctx.ellipse(-2, -1, 2, 1.5, 0.3, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+                            
+                        case 'stone':
+                            // Draw an angular stone
+                            this.ctx.fillStyle = '#778899';
+                            this.ctx.strokeStyle = '#2F4F4F';
+                            this.ctx.lineWidth = 1;
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(-4, 2);
+                            this.ctx.lineTo(0, -4);
+                            this.ctx.lineTo(4, -1);
+                            this.ctx.lineTo(2, 3);
+                            this.ctx.lineTo(-3, 4);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            this.ctx.stroke();
+                            
+                            // Add crack detail
+                            this.ctx.strokeStyle = '#5F6F7F';
+                            this.ctx.lineWidth = 0.5;
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(-1, -2);
+                            this.ctx.lineTo(1, 2);
+                            this.ctx.stroke();
+                            break;
+                            
+                        case 'fossil':
+                            // Draw a shell fossil
+                            this.ctx.strokeStyle = '#8B7355';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.beginPath();
+                            // Spiral pattern
+                            for (let i = 0; i < 3; i++) {
+                                const radius = 2 + i * 2;
+                                this.ctx.arc(0, 0, radius, Math.PI, Math.PI * 2.5);
+                            }
+                            this.ctx.stroke();
+                            
+                            // Add center detail
+                            this.ctx.fillStyle = '#8B7355';
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, 1, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+                    }
+                    
+                    this.ctx.restore();
                 }
                 
                 // Render power-up diamonds
@@ -3093,6 +3976,10 @@
                     }
                     return; // Don't render game elements during countdown
                 }
+                
+                // Draw background decorations with time of day
+                this.renderBackgroundDecorations();
+                
                 // Render impact particles with enhanced effects
                 for (const particle of this.impactParticles) {
                     const alpha = particle.life / particle.maxLife;
@@ -3107,7 +3994,7 @@
                         this.ctx.fillStyle = particle.color ? `${particle.color}${alpha * 0.3})` : `rgba(255, 200, 0, ${alpha * 0.3})`;
                         this.ctx.beginPath();
                         this.ctx.arc(particle.x, particle.y, size * 1.5, 0, Math.PI * 2);
-                        this.ctx.fill();
+                    this.ctx.fill();
                     }
                 }
                 
@@ -3333,19 +4220,50 @@
                     this.ctx.font = 'bold 12px Arial';
                     this.ctx.textAlign = 'center';
                     this.ctx.fillText(boulder.hp, boulder.x, boulder.y - boulder.radius - 10);
+                    
+                    // Safety indicator - show shield if boulder is still safe
+                    if (boulder.safetyTimer > 0) {
+                        this.ctx.save();
+                        // Pulsing effect
+                        const pulse = Math.sin(Date.now() * 0.005) * 0.2 + 0.8;
+                        this.ctx.globalAlpha = 0.6 * pulse;
+                        
+                        // Shield bubble
+                        this.ctx.strokeStyle = '#00FFFF';
+                        this.ctx.lineWidth = 3;
+                        this.ctx.beginPath();
+                        this.ctx.arc(boulder.x, boulder.y, boulder.radius + 10, 0, Math.PI * 2);
+                        this.ctx.stroke();
+                        
+                        // Shield icon
+                        this.ctx.fillStyle = '#00FFFF';
+                        this.ctx.font = 'bold 16px Arial';
+                        this.ctx.textAlign = 'center';
+                        this.ctx.fillText('🛡️', boulder.x, boulder.y - boulder.radius - 35);
+                        
+                        this.ctx.restore();
+                    }
                 }
             }
 
             gameLoop() {
+                // Handle wave screen timer
+                if (this.showingWaveScreen) {
+                    this.waveScreenTimer -= 16; // ~60fps
+                    if (this.waveScreenTimer <= 0) {
+                        this.startNextWavePhase();
+                    }
+                }
+                
                 // Update game logic
-                if (!this.isPaused) {
-                    if (this.currentState === GAME_STATE.PHASE1) {
+                if (!this.isPaused && !this.showingWaveScreen) {
+                if (this.currentState === GAME_STATE.PHASE1) {
                         if (!this.showingCongrats) {
-                            this.updatePhase1();
+                    this.updatePhase1();
                         }
-                    } else if (this.currentState === GAME_STATE.PHASE2) {
+                } else if (this.currentState === GAME_STATE.PHASE2) {
                         if (!this.showingPowerUpSelection) {
-                            this.updatePhase2();
+                    this.updatePhase2();
                         }
                     }
                 }
