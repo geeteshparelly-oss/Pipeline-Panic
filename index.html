@@ -272,6 +272,17 @@
                 this.showingWaveScreen = false; // Showing wave announcement
                 this.waveScreenTimer = 0; // Timer for wave screen
                 
+                // Tutorial state for wave 1
+                this.showingTutorial = false;
+                this.tutorialStep = 'intro'; // 'intro', 'gems', 'congrats', 'dodge', 'final'
+                this.tutorialShown = {
+                    intro: false,
+                    gems: false,
+                    congrats: false,
+                    dodge: false,
+                    final: false
+                }
+                
                 // Phase 2 variables
                 this.gun = { x: 400, y: 380, width: 40, height: 20 };
                 this.baseGunWidth = 40;
@@ -500,8 +511,17 @@
                 // Clear game over state
                 this.gameOverName = '';
                 this.gameOverNameSubmitted = false;
+                
+                // For wave 1, show tutorial intro
+                if (this.wave === 1) {
+                    this.showingTutorial = true;
+                    this.tutorialStep = 'intro';
+                    this.showingWaveScreen = false;
+                    this.waveScreenTimer = 0;
+                } else {
                 this.showingWaveScreen = true;  // Show wave screen
                 this.waveScreenTimer = 2000;    // Show for 2 seconds
+                }
                 
                 // Clear all game data
                 this.bullets = [];
@@ -1291,7 +1311,9 @@
                         this.mouse.down = true;
                     }
                     
-                    if (this.showPauseMenu) {
+                    if (this.showingTutorial) {
+                        this.handleTutorialClick();
+                    } else if (this.showPauseMenu) {
                         this.handlePauseMenuClick();
                     } else if (this.currentState === GAME_STATE.MENU) {
                         // Only handle menu clicks if not in a sub-screen
@@ -1721,6 +1743,14 @@
             }
             
             transitionToPhase2() {
+                // For wave 1, show congrats tutorial
+                if (this.wave === 1 && !this.tutorialShown.congrats) {
+                    this.showingTutorial = true;
+                    this.tutorialStep = 'congrats';
+                    this.tutorialShown.congrats = true;
+                    return;
+                }
+                
                 // Immediately switch to phase 2
                 this.currentState = GAME_STATE.PHASE2;
                 
@@ -1901,6 +1931,14 @@
                 if (this.boulderPhaseStartCountdown > 0) {
                     this.boulderPhaseStartCountdown -= 16;
                     return; // Don't update anything else during countdown
+                }
+                
+                // Check for wave 1 completion
+                if (this.wave === 1 && this.boulders.length === 0 && !this.tutorialShown.final) {
+                    this.showingTutorial = true;
+                    this.tutorialStep = 'final';
+                    this.tutorialShown.final = true;
+                    return;
                 }
                 
                 // Update boulder phase timer
@@ -2555,8 +2593,8 @@
                     }
                 }
 
-                // Only render game states if not showing wave screen
-                if (!this.showingWaveScreen) {
+                // Only render game states if not showing wave screen or tutorial
+                if (!this.showingWaveScreen && !this.showingTutorial) {
                     if (this.currentState === GAME_STATE.MENU) {
                         this.renderMenu();
                     } else if (this.currentState === GAME_STATE.PHASE1) {
@@ -2588,6 +2626,11 @@
                 // Render wave screen if showing
                 if (this.showingWaveScreen) {
                     this.renderWaveScreen();
+                }
+                
+                // Render tutorial if showing
+                if (this.showingTutorial) {
+                    this.renderTutorial();
                 }
             }
             
@@ -4538,10 +4581,10 @@
                 
                 // Label if requested
                 if (showLabel) {
-                    this.ctx.font = '14px Arial';
-                    this.ctx.fillStyle = '#FFFFFF';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.fillText('Selected Skin', x + 40, y + 60);
+                this.ctx.font = '14px Arial';
+                this.ctx.fillStyle = '#FFFFFF';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('Selected Skin', x + 40, y + 60);
                 }
             }
             
@@ -5203,6 +5246,73 @@
                         this.ctx.restore();
                     }
                 }
+                
+                // Render countdown if not started
+                if (!this.phaseStarted) {
+                    // Darken background
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    this.ctx.fillRect(0, 0, 800, 400);
+                    
+                    this.ctx.font = 'bold 72px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+                    
+                    const seconds = Math.ceil(this.countdownTimer / 1000);
+                    if (seconds > 0) {
+                        // Countdown number
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        const text = seconds.toString();
+                        this.ctx.strokeText(text, 400, 200);
+                        this.ctx.fillText(text, 400, 200);
+                        
+                        // Instructions for wave 1
+                        if (this.wave === 1) {
+                            // Background box for better text visibility
+                            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                            this.ctx.fillRect(50, 250, 700, 90);
+                            this.ctx.strokeStyle = '#FFD700';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.strokeRect(50, 250, 700, 90);
+                            
+                            this.ctx.font = '24px Arial';
+                            this.ctx.fillStyle = '#4CAF50';
+                            const instruction = 'Use mouse and click to drag and dig the dirt!';
+                            this.ctx.fillText(instruction, 400, 280);
+                            
+                            this.ctx.font = '20px Arial';
+                            this.ctx.fillStyle = '#FFD700';
+                            const hint = 'Create a path from tap to tank';
+                            this.ctx.fillText(hint, 400, 320);
+                        }
+                    } else {
+                        this.ctx.fillStyle = '#00FF00';
+                        this.ctx.strokeStyle = '#000000';
+                        this.ctx.lineWidth = 4;
+                        this.ctx.strokeText('DIG!', 400, 200);
+                        this.ctx.fillText('DIG!', 400, 200);
+                    }
+                }
+                
+                // Render phase 1 timer
+                const minutes = Math.floor(this.phaseTimer / 60000);
+                const seconds = Math.floor((this.phaseTimer % 60000) / 1000);
+                const timerText = `Time: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                this.ctx.font = 'bold 24px Arial';
+                this.ctx.fillStyle = this.phaseTimer < 10000 ? '#FF0000' : '#FFFFFF';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 3;
+                this.ctx.textAlign = 'right';
+                this.ctx.strokeText(timerText, 780, 30);
+                this.ctx.fillText(timerText, 780, 30);
+                
+                // Render fuel percentage
+                this.ctx.textAlign = 'left';
+                this.ctx.fillStyle = this.fuelLevel >= 20 ? '#00FF00' : '#FFD700';
+                this.ctx.strokeText(`Fuel: ${Math.floor(this.fuelLevel)}%`, 20, 30);
+                this.ctx.fillText(`Fuel: ${Math.floor(this.fuelLevel)}%`, 20, 30);
             }
 
             renderPhase2() {
@@ -5629,6 +5739,242 @@
                 
                 // Continue loop
                 requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            handleTutorialClick() {
+                const centerX = 400;
+                const centerY = 200;
+                
+                if (this.tutorialStep === 'intro') {
+                    // Check Next button - updated position
+                    if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
+                        this.mouse.y > 320 && this.mouse.y < 360) {
+                        this.tutorialStep = 'gems';
+                        this.playSound('dig');
+                    }
+                } else if (this.tutorialStep === 'gems') {
+                    // Check Start button - lower position
+                    if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
+                        this.mouse.y > 340 && this.mouse.y < 380) {
+                        this.showingTutorial = false;
+                        this.showingWaveScreen = true;
+                        this.waveScreenTimer = 2000;
+                        this.playSound('dig');
+                    }
+                } else if (this.tutorialStep === 'congrats') {
+                    // Check Next button - updated position
+                    if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
+                        this.mouse.y > 320 && this.mouse.y < 360) {
+                        this.showingTutorial = false;
+                        // Show power-up selection if any were collected
+                        if (this.collectedPowerUps.length > 0) {
+                            this.showPowerUpSelection();
+                        } else {
+                            // Immediately create boulders and start phase 2
+                            this.createBoulders();
+                            this.updateUI();
+                        }
+                        this.playSound('dig');
+                    }
+                } else if (this.tutorialStep === 'final') {
+                    // Check Continue button - updated position
+                    if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
+                        this.mouse.y > 320 && this.mouse.y < 360) {
+                        this.showingTutorial = false;
+                        this.nextWave();
+                        this.playSound('dig');
+                    }
+                }
+            }
+            
+            renderTutorial() {
+                // Full black background for tutorial screens
+                this.ctx.fillStyle = '#000000';
+                this.ctx.fillRect(0, 0, 800, 400);
+                
+                const centerX = 400;
+                const centerY = 200;
+                
+                if (this.tutorialStep === 'intro') {
+                    // Title
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#FF6B6B';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('EMERGENCY ALERT!', centerX, 80);
+                    
+                    // Story text
+                    this.ctx.font = '20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    const lines = [
+                        'Asteroids are falling to Earth!',
+                        'We need to blast them to pieces.',
+                        '',
+                        'But first, we need to dig the dirt to guide',
+                        'the fuel to the tank so we can power our blaster.'
+                    ];
+                    
+                    let y = 130;
+                    for (const line of lines) {
+                        this.ctx.fillText(line, centerX, y);
+                        y += 25;
+                    }
+                    
+                    // Next button - moved to bottom
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(centerX - 60, 320, 120, 40);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 60, 320, 120, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('NEXT', centerX, 345);
+                    
+                } else if (this.tutorialStep === 'gems') {
+                    // Title
+                    this.ctx.font = 'bold 32px Arial';
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('POWER-UP GEMS', centerX, 80);
+                    
+                    // Draw the three gems
+                    const gemX = centerX - 150;
+                    const gemY = 140;
+                    const spacing = 150;
+                    const gemTypes = ['rapidFire', 'doubleDamage', 'spreadShot'];
+                    const gemColors = [
+                        ['#FFD700', '#FFA500', '#FF8C00'],
+                        ['#FF69B4', '#FF1493', '#C71585'],
+                        ['#00CED1', '#00BFFF', '#4169E1']
+                    ];
+                    const gemNames = ['Rapid Fire', 'Double Damage', 'Spread Shot'];
+                    
+                    for (let i = 0; i < 3; i++) {
+                        const x = gemX + i * spacing;
+                        
+                        // Draw gem
+                        this.ctx.save();
+                        this.ctx.translate(x, gemY);
+                        
+                        const gradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, 20);
+                        gradient.addColorStop(0, gemColors[i][0]);
+                        gradient.addColorStop(0.5, gemColors[i][1]);
+                        gradient.addColorStop(1, gemColors[i][2]);
+                        
+                        this.ctx.fillStyle = gradient;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(0, -20);
+                        this.ctx.lineTo(20, 0);
+                        this.ctx.lineTo(0, 20);
+                        this.ctx.lineTo(-20, 0);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                        
+                        // Gem name
+                        this.ctx.font = '14px Arial';
+                        this.ctx.fillStyle = '#FFFFFF';
+                        this.ctx.fillText(gemNames[i], 0, 40);
+                        
+                        this.ctx.restore();
+                    }
+                    
+                    // Instructions
+                    this.ctx.font = '20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    const lines = [
+                        'When digging, you might find some gems.',
+                        'You can use the fuel to collect the gems.',
+                        '',
+                        'But be aware! The goal to move on to the next',
+                        'phase is to fill your tank to at least 20%!!'
+                    ];
+                    
+                    let y = 220;
+                    for (const line of lines) {
+                        this.ctx.fillText(line, centerX, y);
+                        y += 25;
+                    }
+                    
+                    // Start button - moved lower
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(centerX - 60, 340, 120, 40);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 60, 340, 120, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('START', centerX, 365);
+                    
+                } else if (this.tutorialStep === 'congrats') {
+                    // Title
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#00FF00';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('CONGRATULATIONS!', centerX, 100);
+                    
+                    // Message
+                    this.ctx.font = '20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    const lines = [
+                        'Now we have enough fuel to power our blaster!',
+                        '',
+                        'Use your arrow keys to move left and right,',
+                        'but make sure to dodge the asteroids!'
+                    ];
+                    
+                    let y = 150;
+                    for (const line of lines) {
+                        this.ctx.fillText(line, centerX, y);
+                        y += 25;
+                    }
+                    
+                    // Next button - moved to bottom
+                    this.ctx.fillStyle = '#4CAF50';
+                    this.ctx.fillRect(centerX - 60, 320, 120, 40);
+                    this.ctx.strokeStyle = '#2E7D32';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 60, 320, 120, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('NEXT', centerX, 345);
+                    
+                } else if (this.tutorialStep === 'final') {
+                    // Title
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('GOOD JOB!', centerX, 100);
+                    
+                    // Message
+                    this.ctx.font = '20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    const lines = [
+                        "It's only going to get harder from now",
+                        'and we need more fuel.',
+                        '',
+                        "I'm leaving the fate of the planet to you.",
+                        'Good luck, child!'
+                    ];
+                    
+                    let y = 150;
+                    for (const line of lines) {
+                        this.ctx.fillText(line, centerX, y);
+                        y += 25;
+                    }
+                    
+                    // Continue button - moved to bottom
+                    this.ctx.fillStyle = '#2196F3';
+                    this.ctx.fillRect(centerX - 60, 320, 120, 40);
+                    this.ctx.strokeStyle = '#1565C0';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.strokeRect(centerX - 60, 320, 120, 40);
+                    
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillStyle = '#FFFFFF';
+                    this.ctx.fillText('CONTINUE', centerX, 345);
+                }
             }
         }
 
