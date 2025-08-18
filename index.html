@@ -512,6 +512,15 @@
                 this.gameOverName = '';
                 this.gameOverNameSubmitted = false;
                 
+                // Reset tutorial state for new game
+                this.tutorialShown = {
+                    intro: false,
+                    gems: false,
+                    congrats: false,
+                    dodge: false,
+                    final: false
+                };
+                
                 // For wave 1, show tutorial intro
                 if (this.wave === 1) {
                     this.showingTutorial = true;
@@ -2332,6 +2341,16 @@
                 this.showPauseInstructions = false;
                 this.showingWaveScreen = false;
                 this.waveScreenTimer = 0;
+                this.showingTutorial = false;
+                
+                // Reset tutorial state for next game
+                this.tutorialShown = {
+                    intro: false,
+                    gems: false,
+                    congrats: false,
+                    dodge: false,
+                    final: false
+                };
                 
                 // Reset pause button text
                 const pauseButton = document.getElementById('pauseButton');
@@ -2362,6 +2381,15 @@
                 this.currentState = GAME_STATE.GAME_OVER;
                 this.gameOverName = '';
                 this.gameOverNameSubmitted = false;
+                
+                // Reset tutorial state for next game
+                this.tutorialShown = {
+                    intro: false,
+                    gems: false,
+                    congrats: false,
+                    dodge: false,
+                    final: false
+                };
                 
                 // Save high score
                 const highScore = parseInt(localStorage.getItem('highScore') || '0');
@@ -5719,7 +5747,7 @@
                 }
                 
                 // Update game logic
-                if (!this.isPaused && !this.showingWaveScreen) {
+                if (!this.isPaused && !this.showingWaveScreen && !this.showingTutorial) {
                 if (this.currentState === GAME_STATE.PHASE1) {
                         if (!this.showingCongrats) {
                     this.updatePhase1();
@@ -5766,6 +5794,9 @@
                     if (this.mouse.x > centerX - 60 && this.mouse.x < centerX + 60 &&
                         this.mouse.y > 320 && this.mouse.y < 360) {
                         this.showingTutorial = false;
+                        // Actually transition to phase 2
+                        this.currentState = GAME_STATE.PHASE2;
+                        
                         // Show power-up selection if any were collected
                         if (this.collectedPowerUps.length > 0) {
                             this.showPowerUpSelection();
